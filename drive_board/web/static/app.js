@@ -1,3 +1,11 @@
+const DEFAULT_PAGE_SIZE = 20;
+const ALLOWED_PAGE_SIZES = new Set([10, 20, 50, 100]);
+const ROUTE_PREFIX = "/app";
+const PDFJS_MODULE_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+const PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.mjs";
+
+let pdfJsPromise = null;
+
 const state = {
   actor: null,
   workspaces: [],
@@ -14,7 +22,7 @@ const state = {
   sortField: "modified_at",
   sortDirection: "desc",
   page: 1,
-  pageSize: 20,
+  pageSize: DEFAULT_PAGE_SIZE,
   managerMode: null,
   managerContext: null,
   previewCleanup: null,
@@ -25,7 +33,7 @@ const state = {
 const EDITABLE_PREVIEW_TYPES = new Set(["html", "markdown", "text"]);
 const MEMBER_PERMISSIONS = ["read", "write", "owner"];
 const NAME_COLLATOR = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
-const NAV_BUTTON_IDS = ["fileListNavBtn", "sharedNavBtn", "shareManagerNavBtn", "adminBtn", "profileNavBtn"];
+const NAV_BUTTON_IDS = ["fileListNavBtn", "sharedNavBtn", "shareManagerNavBtn", "spaceManagerNavBtn", "adminBtn", "profileNavBtn"];
 const CODE_EXTENSIONS = new Set([
   "c",
   "cc",
@@ -154,6 +162,247 @@ function workspacePublicLinksApiUrl(workspace) {
 
 function toAbsoluteUrl(path) {
   return new URL(path, window.location.origin).toString();
+}
+
+function decodeRoutePart(value) {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizePageSize(value) {
+  const size = Number(value) || DEFAULT_PAGE_SIZE;
+  return ALLOWED_PAGE_SIZES.has(size) ? size : DEFAULT_PAGE_SIZE;
+}
+
+function resolveRouteWorkspace(name) {
+  if (name && state.workspaces.some((workspace) => workspace.name === name)) {
+    return name;
+  }
+  if (state.currentWorkspace && state.workspaces.some((workspace) => workspace.name === state.currentWorkspace)) {
+    return state.currentWorkspace;
+  }
+  return state.workspaces[0]?.name || null;
+}
+
+function buildAppUrl() {
+  const segments = [ROUTE_PREFIX];
+  const params = new URLSearchParams();
+
+  switch (state.activeView) {
+    case "shared":
+      segments.push("shared");
+      if (state.currentWorkspace) {
+        params.set("workspace", state.currentWorkspace);
+      }
+      break;
+    case "share-manager":
+      segments.push("share-manager");
+      if (state.currentWorkspace) {
+        segments.push(encodeURIComponent(state.currentWorkspace));
+      }
+      break;
+    case "workspace-members":
+      segments.push("workspace-members");
+      if (state.currentWorkspace) {
+        segments.push(encodeURIComponent(state.currentWorkspace));
+      }
+      break;
+    case "actor-admin":
+      segments.push("admin", "actors");
+      if (state.currentWorkspace) {
+        params.set("workspace", state.currentWorkspace);
+      }
+      break;
+    case "profile":
+      segments.push("profile");
+      if (state.currentWorkspace) {
+        params.set("workspace", state.currentWorkspace);
+      }
+      break;
+    case "files":
+    default: {
+      segments.push("files");
+      if (state.currentWorkspace) {
+        segments.push(encodeURIComponent(state.currentWorkspace));
+        const normalizedPath = normalizePathInput(state.currentPath);
+        if (normalizedPath) {
+          segments.push(...normalizedPath.split("/").map(encodeURIComponent));
+        }
+      }
+      if (state.fileQuery) {
+        params.set("q", state.fileQuery);
+      }
+      if (state.sortField !== "modified_at") {
+        params.set("sort", state.sortField);
+      }
+      if (state.sortDirection !== defaultSortDirection(state.sortField)) {
+        params.set("dir", state.sortDirection);
+      }
+      if (state.page !== 1) {
+        params.set("page", String(state.page));
+      }
+      if (state.pageSize !== DEFAULT_PAGE_SIZE) {
+        params.set("size", String(state.pageSize));
+      }
+      break;
+    }
+  }
+
+  const query = params.toString();
+  return `${segments.join("/")}${query ? `?${query}` : ""}`;
+}
+
+function syncRoute({ replace = false } = {}) {
+  const nextUrl = buildAppUrl();
+  const currentUrl = `${window.location.pathname}${window.location.search}`;
+  if (nextUrl === currentUrl) {
+    return;
+  }
+  window.history[replace ? "replaceState" : "pushState"](null, "", nextUrl);
+}
+
+function parseAppRoute() {
+  const url = new URL(window.location.href);
+  const segments = url.pathname.split("/").filter(Boolean).map(decodeRoutePart);
+  if (segments[0] !== ROUTE_PREFIX.slice(1)) {
+    return null;
+  }
+
+  const params = url.searchParams;
+  const route = {
+    view: "files",
+    workspace: null,
+    path: "",
+    fileQuery: "",
+    sortField: "modified_at",
+    sortDirection: "desc",
+    page: 1,
+    pageSize: DEFAULT_PAGE_SIZE,
+  };
+
+  if (segments[1] === "shared") {
+    route.view = "shared";
+    route.workspace = params.get("workspace") || null;
+    return route;
+  }
+  if (segments[1] === "share-manager") {
+    route.view = "share-manager";
+    route.workspace = segments[2] || params.get("workspace") || null;
+    return route;
+  }
+  if (segments[1] === "workspace-members") {
+    route.view = "workspace-members";
+    route.workspace = segments[2] || params.get("workspace") || null;
+    return route;
+  }
+  if (segments[1] === "admin" && segments[2] === "actors") {
+    route.view = "actor-admin";
+    route.workspace = params.get("workspace") || null;
+    return route;
+  }
+  if (segments[1] === "profile") {
+    route.view = "profile";
+    route.workspace = params.get("workspace") || null;
+    return route;
+  }
+
+  const fileSegments = segments[1] === "files" ? segments.slice(2) : [];
+  route.workspace = fileSegments[0] || params.get("workspace") || null;
+  route.path = fileSegments.length > 1 ? fileSegments.slice(1).join("/") : "";
+  route.fileQuery = params.get("q") || "";
+
+  const sortField = params.get("sort");
+  if (["name", "size", "modified_at"].includes(sortField)) {
+    route.sortField = sortField;
+  }
+  const sortDirection = params.get("dir");
+  route.sortDirection = sortDirection === "asc" || sortDirection === "desc"
+    ? sortDirection
+    : defaultSortDirection(route.sortField);
+
+  const page = Number.parseInt(params.get("page") || "1", 10);
+  route.page = Number.isInteger(page) && page > 0 ? page : 1;
+  route.pageSize = normalizePageSize(params.get("size"));
+  return route;
+}
+
+function applyFileRoutePreferences(route = null) {
+  state.fileQuery = route?.fileQuery || "";
+  state.sortField = route?.sortField || "modified_at";
+  state.sortDirection = route?.sortDirection || defaultSortDirection(state.sortField);
+  state.page = route?.page || 1;
+  state.pageSize = normalizePageSize(route?.pageSize);
+  $("fileSearchInput").value = state.fileQuery;
+  $("pageSizeSelect").value = String(state.pageSize);
+}
+
+async function restoreRouteFromLocation() {
+  const route = parseAppRoute();
+  const view = route?.view || "files";
+  const workspace = resolveRouteWorkspace(route?.workspace);
+  if (workspace) {
+    state.currentWorkspace = workspace;
+    renderWorkspaces();
+  }
+
+  if (view === "files") {
+    state.currentPath = route?.path || "";
+    applyFileRoutePreferences(route);
+    try {
+      await openFileListView({ skipRouteSync: true, preserveDetail: true });
+    } catch {
+      state.currentPath = "";
+      await openFileListView({ skipRouteSync: true, preserveDetail: true });
+    }
+    syncRoute({ replace: true });
+    return;
+  }
+
+  try {
+    switch (view) {
+      case "shared":
+        await openSharedManager({ skipRouteSync: true });
+        break;
+      case "share-manager":
+        await openShareManager({ skipRouteSync: true });
+        if (state.activeView !== "share-manager") {
+          await openFileListView({ skipRouteSync: true, preserveDetail: true });
+        }
+        break;
+      case "workspace-members":
+        await openWorkspaceMembersManager({ skipRouteSync: true });
+        if (state.activeView !== "workspace-members") {
+          await openFileListView({ skipRouteSync: true, preserveDetail: true });
+        }
+        break;
+      case "actor-admin":
+        await openActorManager({ skipRouteSync: true });
+        break;
+      case "profile":
+        await openProfileManager({ skipRouteSync: true });
+        break;
+      default:
+        await openFileListView({ skipRouteSync: true, preserveDetail: true });
+        break;
+    }
+  } catch {
+    await openFileListView({ skipRouteSync: true, preserveDetail: true });
+  }
+  syncRoute({ replace: true });
+}
+
+async function getPdfJs() {
+  if (!pdfJsPromise) {
+    pdfJsPromise = import(PDFJS_MODULE_URL).then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      return pdfjs;
+    });
+  }
+  return pdfJsPromise;
 }
 
 async function readErrorDetail(response) {
@@ -341,11 +590,12 @@ function activeNavButtonId() {
       return "sharedNavBtn";
     case "share-manager":
       return "shareManagerNavBtn";
+    case "workspace-members":
+      return "spaceManagerNavBtn";
     case "actor-admin":
       return "adminBtn";
     case "profile":
       return "profileNavBtn";
-    case "workspace-members":
     case "files":
     default:
       return "fileListNavBtn";
@@ -506,12 +756,35 @@ function permissionOptions(options, selected) {
     .join("");
 }
 
-function actorOptions({ excludeIds = [] } = {}) {
-  const blocked = new Set([state.actor?.actor_id, ...excludeIds].filter(Boolean));
+function actorOptions({ excludeIds = [], selectedId = null, includeSelf = false } = {}) {
+  const blocked = new Set(excludeIds.filter(Boolean));
   return state.actors
-    .filter((actor) => !blocked.has(actor.actor_id))
-    .map((actor) => `<option value="${escapeHtml(actor.actor_id)}">${escapeHtml(actor.actor_id)} · ${escapeHtml(actor.display_name)}</option>`)
+    .filter((actor) => {
+      if (!includeSelf && actor.actor_id === state.actor?.actor_id && actor.actor_id !== selectedId) {
+        return false;
+      }
+      return !blocked.has(actor.actor_id) || actor.actor_id === selectedId;
+    })
+    .map((actor) => `
+      <option value="${escapeHtml(actor.actor_id)}"${actor.actor_id === selectedId ? " selected" : ""}>
+        ${escapeHtml(actor.actor_id)} · ${escapeHtml(actor.display_name)}
+      </option>
+    `)
     .join("");
+}
+
+function actorMeta(actorId) {
+  const actor = state.actors.find((item) => item.actor_id === actorId) || null;
+  if (!actor) {
+    return {
+      title: actorId,
+      subtitle: "",
+    };
+  }
+  return {
+    title: actor.actor_id,
+    subtitle: [actor.display_name, actor.kind].filter(Boolean).join(" · "),
+  };
 }
 
 function setWriteActionsEnabled(enabled) {
@@ -788,6 +1061,112 @@ function createAudioPreview(audio, canvas, root) {
   };
 }
 
+function createPdfPreview(src, root) {
+  const status = root.querySelector("#pdfPreviewStatus");
+  const pages = root.querySelector("#pdfPreviewPages");
+  let disposed = false;
+  let loadingTask = null;
+  const renderTasks = new Set();
+
+  const showError = (message) => {
+    status.textContent = "PDF 预览失败";
+    pages.innerHTML = `<div class="empty-panel pdf-preview-error">${escapeHtml(message)}</div>`;
+  };
+
+  const renderPage = async (pdf, pageNumber) => {
+    const page = await pdf.getPage(pageNumber);
+    if (disposed) {
+      return;
+    }
+
+    const viewport = page.getViewport({ scale: 1 });
+    const availableWidth = Math.min(Math.max(pages.clientWidth - 8, 320), 980);
+    const scale = availableWidth / viewport.width;
+    const pixelRatio = window.devicePixelRatio || 1;
+    const renderViewport = page.getViewport({ scale: scale * pixelRatio });
+    const displayViewport = page.getViewport({ scale });
+
+    const wrapper = document.createElement("section");
+    wrapper.className = "pdf-page-card";
+    wrapper.innerHTML = `
+      <header class="pdf-page-head">
+        <span>第 ${pageNumber} 页</span>
+      </header>
+      <canvas class="pdf-page-canvas"></canvas>
+    `;
+    pages.append(wrapper);
+
+    const canvas = wrapper.querySelector("canvas");
+    const context = canvas.getContext("2d", { alpha: false });
+    canvas.width = Math.ceil(renderViewport.width);
+    canvas.height = Math.ceil(renderViewport.height);
+    canvas.style.width = `${displayViewport.width}px`;
+    canvas.style.height = `${displayViewport.height}px`;
+
+    const renderTask = page.render({
+      canvasContext: context,
+      viewport: renderViewport,
+    });
+    renderTasks.add(renderTask);
+    try {
+      await renderTask.promise;
+    } finally {
+      renderTasks.delete(renderTask);
+    }
+  };
+
+  (async () => {
+    try {
+      status.textContent = "正在加载 PDF…";
+      const pdfjs = await getPdfJs();
+      if (disposed) {
+        return;
+      }
+      loadingTask = pdfjs.getDocument({
+        url: toAbsoluteUrl(src),
+        withCredentials: true,
+      });
+      const pdf = await loadingTask.promise;
+      if (disposed) {
+        await loadingTask.destroy();
+        return;
+      }
+
+      status.textContent = `共 ${pdf.numPages} 页`;
+      pages.innerHTML = "";
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        if (disposed) {
+          break;
+        }
+        await renderPage(pdf, pageNumber);
+      }
+      if (!disposed && pdf.numPages === 0) {
+        pages.innerHTML = '<div class="empty-panel">这个 PDF 没有可渲染的页面。</div>';
+      }
+    } catch (error) {
+      if (!disposed) {
+        console.error(error);
+        showError(error?.message || "当前 PDF 无法渲染，请尝试新窗口打开。");
+      }
+    }
+  })();
+
+  return () => {
+    disposed = true;
+    for (const renderTask of renderTasks) {
+      try {
+        renderTask.cancel();
+      } catch {
+        // Ignore cancelled render tasks during teardown.
+      }
+    }
+    renderTasks.clear();
+    if (loadingTask) {
+      loadingTask.destroy().catch(() => {});
+    }
+  };
+}
+
 function resetTransientViewState() {
   state.activeView = "files";
   state.currentWorkspace = null;
@@ -800,7 +1179,7 @@ function resetTransientViewState() {
   state.sortField = "modified_at";
   state.sortDirection = "desc";
   state.page = 1;
-  state.pageSize = 20;
+  state.pageSize = DEFAULT_PAGE_SIZE;
   state.managerMode = null;
   state.managerContext = null;
 }
@@ -821,8 +1200,9 @@ async function bootstrap() {
     const session = await api("/api/session");
     if (session.actor) {
       state.actor = session.actor;
-      await loadShell();
+      await loadShell({ skipContentLoad: true });
       showApp();
+      await restoreRouteFromLocation();
     } else {
       showLogin();
     }
@@ -831,7 +1211,7 @@ async function bootstrap() {
   }
 }
 
-async function loadShell() {
+async function loadShell({ skipContentLoad = false } = {}) {
   const [workspaces, actors, shared] = await Promise.all([
     api("/api/workspaces"),
     api("/api/actors"),
@@ -858,8 +1238,8 @@ async function loadShell() {
   $("pageSizeSelect").value = String(state.pageSize);
   updateSidebarNav();
   applyViewMode();
-  if (state.currentWorkspace) {
-    await loadFiles();
+  if (!skipContentLoad) {
+    await restoreRouteFromLocation();
   }
 }
 
@@ -868,6 +1248,7 @@ function renderWorkspaces() {
   const switcher = $("workspaceSwitcher");
   list.innerHTML = "";
   const current = currentWorkspaceInfo() || state.workspaces[0] || null;
+  $("spaceManagerNavBtn").classList.toggle("hidden", !current || current.kind !== "share_group");
   $("workspaceSwitchLabel").textContent = current?.name || "请选择";
   $("workspaceSwitchMeta").textContent = workspaceSummaryText(current);
   $("workspaceSwitchPill").textContent = workspaceBadgeText(current);
@@ -900,17 +1281,20 @@ function renderShared() {
   $("sharedNavBtn").title = state.shared.length ? `与我共享 ${state.shared.length} 项` : "暂无共享项目";
 }
 
-async function selectWorkspace(name, path = "") {
+async function selectWorkspace(name, path = "", { skipRouteSync = false, preserveDetail = false, replaceRoute = false } = {}) {
   $("workspaceSwitcher").open = false;
   state.currentWorkspace = name;
   state.currentPath = path;
   state.currentItem = null;
   switchToFileView();
   renderWorkspaces();
-  await loadFiles();
+  await loadFiles({ preserveDetail });
+  if (!skipRouteSync) {
+    syncRoute({ replace: replaceRoute });
+  }
 }
 
-async function loadFiles({ preserveDetail = false } = {}) {
+async function loadFiles({ preserveDetail = false, preservePage = false } = {}) {
   if (!state.currentWorkspace) return;
   const params = new URLSearchParams({
     workspace: state.currentWorkspace,
@@ -919,9 +1303,10 @@ async function loadFiles({ preserveDetail = false } = {}) {
   const payload = await api(`/api/files?${params.toString()}`);
   state.currentPermission = payload.permission;
   state.currentItems = payload.items;
-  state.page = 1;
+  if (!preservePage) {
+    state.page = 1;
+  }
   setWriteActionsEnabled(payload.permission === "write");
-  $("membersBtn").classList.toggle("hidden", !canManageWorkspaceMembers());
   renderFileList(payload.path || "");
   if (!preserveDetail) {
     closeDetail();
@@ -1169,14 +1554,6 @@ async function previewItemForWorkspace(workspace, item) {
   if (item.preview_type === "audio") {
     $("previewBody").innerHTML = `
       <section class="audio-preview-shell">
-        <div class="audio-preview-copy">
-          <span class="audio-preview-kicker">Audio Preview</span>
-          <h3>${escapeHtml(item.name)}</h3>
-          <p>独立播放按钮、可点击跳转的时间轴和更明显的进度反馈都放到这里了。</p>
-        </div>
-        <div class="audio-visualizer-card">
-          <canvas class="audio-visualizer" id="audioVisualizer" aria-hidden="true"></canvas>
-        </div>
         <section class="audio-player-panel">
           <audio id="audioPlayer" class="audio-native-element" src="${src}" preload="metadata"></audio>
           <button id="audioPlayBtn" class="audio-play-button" type="button" aria-label="播放">
@@ -1184,7 +1561,6 @@ async function previewItemForWorkspace(workspace, item) {
           </button>
           <div class="audio-progress-shell">
             <div class="audio-progress-meta">
-              <strong>点击或拖动进度条即可跳到对应时间点</strong>
               <span class="audio-time-pair">
                 <span id="audioCurrentTime">0:00</span>
                 <span>/</span>
@@ -1194,6 +1570,9 @@ async function previewItemForWorkspace(workspace, item) {
             <input id="audioProgress" class="audio-progress-input" type="range" min="0" max="100" step="0.1" value="0" aria-label="音频播放进度" />
           </div>
         </section>
+        <div class="audio-visualizer-card">
+          <canvas class="audio-visualizer" id="audioVisualizer" aria-hidden="true"></canvas>
+        </div>
       </section>
     `;
     state.previewCleanup = createAudioPreview(
@@ -1205,14 +1584,17 @@ async function previewItemForWorkspace(workspace, item) {
   }
   if (item.preview_type === "pdf") {
     $("previewBody").innerHTML = `
-      <section class="document-preview-shell">
-        <div class="preview-inline-actions">
-          <span class="path-chip">PDF</span>
+      <section class="document-preview-shell pdf-preview-shell">
+        <div class="preview-inline-actions pdf-preview-toolbar">
+          <span id="pdfPreviewStatus" class="path-chip">正在加载 PDF…</span>
           <a class="preview-link" href="${src}" target="_blank" rel="noopener noreferrer">新窗口打开</a>
         </div>
-        <iframe class="preview-frame preview-pdf" src="${src}"></iframe>
+        <div id="pdfPreviewPages" class="pdf-preview-pages">
+          <div class="empty-panel">正在准备 PDF 预览…</div>
+        </div>
       </section>
     `;
+    state.previewCleanup = createPdfPreview(src, $("previewBody"));
     return;
   }
   if (item.preview_type === "markdown") {
@@ -1623,7 +2005,7 @@ async function openSharedItem(item) {
   });
 }
 
-async function openSharedManager() {
+async function openSharedManager({ skipRouteSync = false, replaceRoute = false } = {}) {
   state.activeView = "shared";
   state.managerMode = "shared";
   state.managerContext = {};
@@ -1689,6 +2071,9 @@ async function openSharedManager() {
       await openSharedItem(item);
     });
   });
+  if (!skipRouteSync) {
+    syncRoute({ replace: replaceRoute });
+  }
 }
 
 async function refreshCurrentManager() {
@@ -1705,26 +2090,29 @@ async function refreshCurrentManager() {
   }
 }
 
-async function openFileListView() {
+async function openFileListView({ skipRouteSync = false, preserveDetail = true, replaceRoute = false } = {}) {
   switchToFileView();
   if (!state.currentWorkspace && state.workspaces.length) {
     state.currentWorkspace = state.workspaces[0].name;
   }
   if (state.currentWorkspace) {
-    await loadFiles({ preserveDetail: true });
+    await loadFiles({ preserveDetail, preservePage: true });
+  }
+  if (!skipRouteSync) {
+    syncRoute({ replace: replaceRoute });
   }
 }
 
 async function refreshShellPreservingWorkspace({ reloadFiles = true } = {}) {
   const workspace = state.currentWorkspace;
   const path = state.currentPath;
-  await loadShell();
+  await loadShell({ skipContentLoad: true });
   if (!workspace || !state.currentWorkspace) return;
   if (workspace === state.currentWorkspace) {
     state.currentPath = path;
     if (reloadFiles) {
       try {
-        await loadFiles();
+        await loadFiles({ preservePage: true });
       } catch {
         await selectWorkspace(workspace, "");
       }
@@ -1732,8 +2120,19 @@ async function refreshShellPreservingWorkspace({ reloadFiles = true } = {}) {
   }
 }
 
-async function openShareManager() {
+async function openShareManager({ skipRouteSync = false, replaceRoute = false } = {}) {
   if (!state.currentWorkspace) return;
+  const params = new URLSearchParams({
+    workspace: state.currentWorkspace,
+    path: "",
+  });
+  try {
+    const payload = await api(`/api/files?${params.toString()}`);
+    state.currentPermission = payload.permission;
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
   if (state.currentPermission !== "write") {
     toast("当前目录只读，无法管理分享");
     return;
@@ -1810,6 +2209,9 @@ async function openShareManager() {
       await refreshCurrentManager();
     },
   });
+  if (!skipRouteSync) {
+    syncRoute({ replace: replaceRoute });
+  }
 }
 
 function confirmDelete(item) {
@@ -1991,15 +2393,154 @@ function openCopyModal(item) {
 }
 
 function openNewGroupModal() {
+  const creatorId = state.actor?.actor_id || "";
   openModal(
-    `<h2>新建共享空间</h2><label><span>名称</span><input name="name" required placeholder="research-team" /></label>`,
+    `
+      <h2>新建共享空间</h2>
+      <label>
+        <span>名称</span>
+        <input name="name" required placeholder="research-team" />
+      </label>
+      <section class="manager-section compact workspace-create-section">
+        <div class="section-head compact">
+          <div>
+            <h2>空间成员</h2>
+            <p>创建者默认保留 owner 权限。确认后会直接进入新建的共享空间。</p>
+          </div>
+          <button id="addWorkspaceMemberBtn" type="button" class="secondary">添加成员</button>
+        </div>
+        <table class="manager-table compact workspace-create-members-table">
+          <thead>
+            <tr>
+              <th>成员</th>
+              <th>权限</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="workspaceCreateMemberRows"></tbody>
+        </table>
+        <p id="workspaceCreateMemberHint" class="field-hint"></p>
+      </section>
+    `,
     async (form) => {
-      await api("/api/workspaces", {
+      const rows = Array.from(document.querySelectorAll('[data-role="workspace-member-row"]'));
+      const members = rows
+        .map((row) => ({
+          actor_id: String(row.querySelector('[data-role="workspace-member-actor"]')?.value || "").trim(),
+          permission: String(row.querySelector('[data-role="workspace-member-permission"]')?.value || "read"),
+        }))
+        .filter((member) => member.actor_id);
+      const created = await api("/api/workspaces", {
         method: "POST",
-        body: { name: form.get("name"), kind: "share_group" },
+        body: {
+          name: String(form.get("name") || "").trim(),
+          kind: "share_group",
+          members,
+        },
       });
+      await loadShell({ skipContentLoad: true });
       toast("共享空间已创建");
-      await loadShell();
+      await selectWorkspace(created.workspace.name, "");
+    },
+    {
+      onReady: ({ body }) => {
+        const rows = body.querySelector("#workspaceCreateMemberRows");
+        const hint = body.querySelector("#workspaceCreateMemberHint");
+        const addButton = body.querySelector("#addWorkspaceMemberBtn");
+        const extraMembers = [];
+
+        const availableActors = (selectedId = "") => {
+          const selectedIds = new Set(extraMembers.map((member) => member.actorId).filter(Boolean));
+          return state.actors.filter((actor) => {
+            if (actor.actor_id === creatorId) {
+              return false;
+            }
+            return !selectedIds.has(actor.actor_id) || actor.actor_id === selectedId;
+          });
+        };
+
+        const renderRows = () => {
+          const creator = actorMeta(creatorId);
+          rows.innerHTML = `
+            <tr>
+              <td>
+                <div class="row-meta">
+                  <strong>${escapeHtml(creator.title)}</strong>
+                  <span>${escapeHtml(creator.subtitle || "创建者")}</span>
+                </div>
+              </td>
+              <td><span class="status-pill">owner</span></td>
+              <td></td>
+            </tr>
+            ${extraMembers
+              .map((member, index) => `
+                <tr data-role="workspace-member-row">
+                  <td>
+                    <select data-role="workspace-member-actor" data-index="${index}">
+                      ${actorOptions({
+                        excludeIds: extraMembers
+                          .filter((_, candidateIndex) => candidateIndex !== index)
+                          .map((candidate) => candidate.actorId),
+                        selectedId: member.actorId,
+                      })}
+                    </select>
+                  </td>
+                  <td>
+                    <select data-role="workspace-member-permission" data-index="${index}">
+                      ${permissionOptions(MEMBER_PERMISSIONS, member.permission)}
+                    </select>
+                  </td>
+                  <td>
+                    <div class="manager-actions workspace-create-row-actions">
+                      <button type="button" data-action="remove-workspace-member" data-index="${index}" class="secondary">移除</button>
+                    </div>
+                  </td>
+                </tr>
+              `)
+              .join("")}
+          `;
+
+          hint.textContent = availableActors().length
+            ? "可继续添加成员，并为每位成员设置 read、write 或 owner 权限。"
+            : "没有可添加的新成员了。";
+          addButton.disabled = !availableActors().length;
+
+          rows.querySelectorAll('[data-role="workspace-member-actor"]').forEach((select) => {
+            select.addEventListener("change", () => {
+              const index = Number(select.dataset.index);
+              extraMembers[index].actorId = select.value;
+              renderRows();
+            });
+          });
+
+          rows.querySelectorAll('[data-role="workspace-member-permission"]').forEach((select) => {
+            select.addEventListener("change", () => {
+              const index = Number(select.dataset.index);
+              extraMembers[index].permission = select.value;
+            });
+          });
+
+          rows.querySelectorAll('[data-action="remove-workspace-member"]').forEach((button) => {
+            button.addEventListener("click", () => {
+              extraMembers.splice(Number(button.dataset.index), 1);
+              renderRows();
+            });
+          });
+        };
+
+        addButton.addEventListener("click", () => {
+          const nextActor = availableActors()[0];
+          if (!nextActor) {
+            toast("没有可添加的新成员");
+            return;
+          }
+          extraMembers.push({ actorId: nextActor.actor_id, permission: "read" });
+          renderRows();
+        });
+
+        body.querySelector('[name="name"]')?.select();
+        renderRows();
+      },
     },
   );
 }
@@ -2074,10 +2615,10 @@ async function uploadFiles(fileList) {
   }
 }
 
-async function openWorkspaceMembersManager() {
+async function openWorkspaceMembersManager({ skipRouteSync = false, replaceRoute = false } = {}) {
   if (!state.currentWorkspace) return;
   if (!canManageWorkspaceMembers()) {
-    toast("只有 group workspace 支持空间成员管理");
+    toast("只有共享空间支持空间管理");
     return;
   }
   state.activeView = "workspace-members";
@@ -2086,13 +2627,19 @@ async function openWorkspaceMembersManager() {
   showManagerView();
   const payload = await api(`/api/workspaces/${encodeURIComponent(state.currentWorkspace)}/members`);
   const memberIds = payload.members.map((member) => member.actor_id);
+  const canDeleteWorkspace = Boolean(
+    state.actor?.is_admin
+      || payload.members.some(
+        (member) => member.actor_id === state.actor?.actor_id && member.permission === "owner",
+      )
+  );
   $("managerBody").innerHTML = `
     <div class="manager-stack">
       <section class="manager-section">
         <div class="section-head">
           <div>
-            <h2>空间成员</h2>
-            <p>点击“创建成员”后再填写成员和权限。</p>
+            <h2>空间管理</h2>
+            <p>在这里可以维护共享空间成员，也可以删除整个共享空间。</p>
           </div>
           <button id="createWorkspaceMemberBtn" type="button">创建成员</button>
         </div>
@@ -2139,6 +2686,18 @@ async function openWorkspaceMembersManager() {
             </tbody>
           </table>
         ` : `<div class="empty-panel">当前空间还没有额外成员。</div>`}
+      </section>
+
+      <section class="manager-section">
+        <div class="section-head">
+          <div>
+            <h2>删除空间</h2>
+            <p>删除后会移除该共享空间的成员、分享记录、公开链接以及空间内文件，此操作不可恢复。</p>
+          </div>
+        </div>
+        ${canDeleteWorkspace
+          ? `<div class="manager-actions"><button id="deleteWorkspaceBtn" type="button" class="secondary">删除共享空间</button></div>`
+          : `<p class="field-hint">只有该空间的 owner 或管理员可以删除共享空间。</p>`}
       </section>
     </div>
   `;
@@ -2208,9 +2767,30 @@ async function openWorkspaceMembersManager() {
       );
     });
   });
+
+  if (canDeleteWorkspace) {
+    $("deleteWorkspaceBtn").addEventListener("click", () => {
+      const workspaceName = state.currentWorkspace;
+      openModal(
+        `<h2>删除共享空间</h2><p>确认删除 ${escapeHtml(workspaceName)}？空间成员、文件、分享记录和公开链接都会一起删除。</p>`,
+        async () => {
+          await api(`/api/workspaces/${encodeURIComponent(workspaceName)}`, {
+            method: "DELETE",
+          });
+          await loadShell({ skipContentLoad: true });
+          toast("共享空间已删除");
+          await openFileListView({ replaceRoute: true });
+        },
+        { confirmLabel: "删除" },
+      );
+    });
+  }
+  if (!skipRouteSync) {
+    syncRoute({ replace: replaceRoute });
+  }
 }
 
-async function openActorManager() {
+async function openActorManager({ skipRouteSync = false, replaceRoute = false } = {}) {
   state.activeView = "actor-admin";
   state.managerMode = "actor-admin";
   state.managerContext = {};
@@ -2401,23 +2981,26 @@ async function openActorManager() {
       await refreshCurrentManager();
     });
   });
+  if (!skipRouteSync) {
+    syncRoute({ replace: replaceRoute });
+  }
 }
 
-async function openProfileManager() {
+async function openProfileManager({ skipRouteSync = false, replaceRoute = false } = {}) {
   state.activeView = "profile";
   state.managerMode = "profile";
   state.managerContext = {};
   showManagerView();
   $("managerBody").innerHTML = `
-    <div class="manager-stack">
+    <div class="manager-stack compact">
       <section class="manager-section">
-        <div class="section-head">
+        <div class="section-head compact">
           <div>
             <h2>个人设置</h2>
             <p>账号当前只读，可修改显示名称和登录密码。</p>
           </div>
         </div>
-        <form id="profileForm" class="manager-grid two-col">
+        <form id="profileForm" class="manager-form">
           <label>
             <span>账号</span>
             <input value="${escapeHtml(state.actor.username || state.actor.actor_id)}" readonly />
@@ -2438,8 +3021,8 @@ async function openProfileManager() {
             <span>确认新密码</span>
             <input name="password_confirm" type="password" placeholder="再次输入新密码" />
           </label>
-          <div class="manager-actions">
-            <button type="submit">保存设置</button>
+          <div class="manager-actions profile-form-actions">
+            <button type="submit" class="profile-submit-button">保存设置</button>
           </div>
         </form>
       </section>
@@ -2465,6 +3048,9 @@ async function openProfileManager() {
     toast("个人设置已保存");
     await openProfileManager();
   });
+  if (!skipRouteSync) {
+    syncRoute({ replace: replaceRoute });
+  }
 }
 
 function bindEvents() {
@@ -2479,8 +3065,9 @@ function bindEvents() {
         body: { username: form.get("username"), password: form.get("password") },
       });
       state.actor = payload.actor;
-      await loadShell();
+      await loadShell({ skipContentLoad: true });
       showApp();
+      await restoreRouteFromLocation();
     } catch (error) {
       $("loginError").textContent = error.message;
     }
@@ -2495,7 +3082,7 @@ function bindEvents() {
   $("textBtn").addEventListener("click", openNewTextModal);
   $("sharedNavBtn").addEventListener("click", openSharedManager);
   $("shareManagerNavBtn").addEventListener("click", openShareManager);
-  $("membersBtn").addEventListener("click", openWorkspaceMembersManager);
+  $("spaceManagerNavBtn").addEventListener("click", openWorkspaceMembersManager);
   $("adminBtn").addEventListener("click", openActorManager);
   $("profileNavBtn").addEventListener("click", openProfileManager);
   $("saveTextBtn").addEventListener("click", saveEditor);
@@ -2510,12 +3097,14 @@ function bindEvents() {
     state.page = 1;
     renderRows(state.currentItems);
     renderSortHeaders();
+    syncRoute({ replace: true });
   });
   $("pageSizeSelect").addEventListener("change", (event) => {
-    state.pageSize = Number(event.currentTarget.value) || 20;
+    state.pageSize = normalizePageSize(event.currentTarget.value);
     state.page = 1;
     renderRows(state.currentItems);
     renderSortHeaders();
+    syncRoute({ replace: true });
   });
   document.querySelectorAll(".sort-header").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2529,25 +3118,30 @@ function bindEvents() {
       state.page = 1;
       renderRows(state.currentItems);
       renderSortHeaders();
+      syncRoute({ replace: true });
     });
   });
   $("firstPageBtn").addEventListener("click", () => {
     state.page = 1;
     renderRows(state.currentItems);
+    syncRoute({ replace: true });
   });
   $("prevPageBtn").addEventListener("click", () => {
     state.page = Math.max(1, state.page - 1);
     renderRows(state.currentItems);
+    syncRoute({ replace: true });
   });
   $("nextPageBtn").addEventListener("click", () => {
     const { totalPages } = getVisibleFileState();
     state.page = Math.min(totalPages, state.page + 1);
     renderRows(state.currentItems);
+    syncRoute({ replace: true });
   });
   $("lastPageBtn").addEventListener("click", () => {
     const { totalPages } = getVisibleFileState();
     state.page = totalPages;
     renderRows(state.currentItems);
+    syncRoute({ replace: true });
   });
   $("uploadBtn").addEventListener("click", () => $("fileInput").click());
   $("uploadDropzone").addEventListener("click", () => {
@@ -2586,6 +3180,14 @@ function bindEvents() {
     state.dragDepth = 0;
     toggleDropOverlay(false);
     await uploadFiles(event.dataTransfer.files);
+  });
+  window.addEventListener("popstate", async () => {
+    if (!state.actor) return;
+    try {
+      await restoreRouteFromLocation();
+    } catch (error) {
+      toast(error.message);
+    }
   });
 }
 

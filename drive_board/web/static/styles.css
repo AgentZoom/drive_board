@@ -1157,7 +1157,10 @@ textarea:focus {
 }
 
 .preview-dialog {
+  display: flex;
+  flex-direction: column;
   width: min(1120px, calc(100vw - 40px));
+  height: min(88vh, 860px);
   max-height: calc(100vh - 32px);
   overflow: hidden;
 }
@@ -1168,7 +1171,8 @@ textarea:focus {
 }
 
 .preview-modal-body {
-  min-height: min(72vh, 760px);
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 18px;
   overflow: auto;
   background: linear-gradient(180deg, rgba(247, 249, 248, 0.92) 0%, rgba(238, 244, 241, 0.96) 100%);
@@ -1182,7 +1186,8 @@ textarea:focus {
 .document-preview-shell {
   display: grid;
   gap: 14px;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
 }
 
 .preview-inline-actions {
@@ -1209,12 +1214,61 @@ textarea:focus {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
+.pdf-preview-toolbar {
+  align-items: center;
+}
+
+.pdf-preview-shell {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.pdf-preview-pages {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.pdf-page-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(35, 51, 45, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 20px 40px rgba(27, 38, 34, 0.08);
+}
+
+.pdf-page-head {
+  display: flex;
+  justify-content: flex-end;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pdf-page-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 26px rgba(27, 38, 34, 0.09);
+}
+
+.pdf-preview-error {
+  max-width: none;
+}
+
 .audio-preview-shell {
   min-height: min(68vh, 720px);
   display: grid;
   align-content: start;
-  gap: 18px;
-  padding: 24px;
+  gap: 16px;
+  padding: 22px;
   border-radius: 24px;
   background:
     radial-gradient(circle at top left, rgba(112, 246, 215, 0.22), transparent 34%),
@@ -1222,33 +1276,6 @@ textarea:focus {
     linear-gradient(160deg, #0d2028 0%, #12383b 48%, #0d5d58 100%);
   color: #ecfbf7;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-.audio-preview-copy {
-  display: grid;
-  gap: 6px;
-}
-
-.audio-preview-kicker {
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(194, 255, 240, 0.78);
-}
-
-.audio-preview-copy h3 {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1.05;
-  letter-spacing: -0.03em;
-}
-
-.audio-preview-copy p {
-  margin: 0;
-  max-width: 760px;
-  color: rgba(233, 251, 245, 0.78);
-  line-height: 1.6;
 }
 
 .audio-visualizer-card {
@@ -1270,8 +1297,8 @@ textarea:focus {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 16px;
-  padding: 18px;
+  gap: 14px;
+  padding: 16px;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1283,6 +1310,7 @@ textarea:focus {
 }
 
 .audio-play-button {
+  flex: 0 0 auto;
   width: 62px;
   height: 62px;
   border: 0;
@@ -1304,20 +1332,15 @@ textarea:focus {
 .audio-progress-shell {
   min-width: 0;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .audio-progress-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.audio-progress-meta strong {
-  font-size: 13px;
-  color: rgba(236, 251, 247, 0.92);
 }
 
 .audio-time-pair {
@@ -1548,6 +1571,15 @@ textarea:focus {
   gap: 8px;
 }
 
+.profile-form-actions {
+  align-self: end;
+}
+
+.profile-submit-button {
+  min-height: 40px;
+  padding: 0 18px;
+}
+
 .public-link-actions {
   flex-wrap: nowrap;
 }
@@ -1665,6 +1697,10 @@ dialog {
   border-radius: 20px;
   padding: 0;
   box-shadow: var(--shadow);
+}
+
+dialog:not([open]) {
+  display: none;
 }
 
 dialog::backdrop {
@@ -1811,9 +1847,21 @@ dialog menu {
     flex-direction: column;
   }
 
+  .audio-preview-shell {
+    padding: 16px;
+  }
+
   .audio-player-panel {
     grid-template-columns: 1fr;
-    justify-items: start;
+    justify-items: stretch;
+  }
+
+  .audio-progress-meta {
+    justify-content: flex-start;
+  }
+
+  .pdf-page-card {
+    padding: 10px;
   }
 
   .pagination-bar {

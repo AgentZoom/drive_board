@@ -31,14 +31,15 @@ class SelfUpdate(BaseModel):
     password: str | None = None
 
 
-class WorkspaceCreate(BaseModel):
-    name: str
-    kind: str = Field(default="share_group", pattern="^(share_group)$")
-
-
 class MemberUpdate(BaseModel):
     actor_id: str
     permission: str = Field(pattern="^(read|write|owner)$")
+
+
+class WorkspaceCreate(BaseModel):
+    name: str
+    kind: str = Field(default="share_group", pattern="^(share_group)$")
+    members: list[MemberUpdate] = Field(default_factory=list)
 
 
 class FolderCreate(BaseModel):

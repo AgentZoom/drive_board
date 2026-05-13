@@ -384,6 +384,7 @@ class Database:
         kind: str,
         owner_actor_id: str | None,
         created_by: str,
+        members: list[dict[str, str]] | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         if kind not in {"private", "share_group"}:
@@ -407,6 +408,17 @@ class Database:
                     VALUES (?, ?, 'owner', ?)
                     """,
                     (workspace_id, owner_actor_id, utcnow()),
+                )
+            for member in members or []:
+                actor_id = str(member["actor_id"])
+                if actor_id == owner_actor_id:
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO workspace_members (workspace_id, actor_id, permission, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (workspace_id, actor_id, str(member["permission"]), utcnow()),
                 )
             if owns_connection:
                 connection.commit()
@@ -571,6 +583,26 @@ class Database:
                 (workspace_id, actor["actor_id"]),
             ).fetchone()
             return bool(row and row["permission"] in {"write", "owner"})
+
+    def can_delete_workspace(self, actor: dict[str, Any], workspace_id: int) -> bool:
+        if actor["is_admin"]:
+            return True
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT permission FROM workspace_members
+                WHERE workspace_id = ? AND actor_id = ?
+                """,
+                (workspace_id, actor["actor_id"]),
+            ).fetchone()
+            return bool(row and row["permission"] == "owner")
+
+    def delete_workspace(self, workspace_id: int) -> None:
+        with closing(self.connect()) as connection:
+            cursor = connection.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
+            if cursor.rowcount == 0:
+                raise KeyError("workspace not found")
+            connection.commit()
 
     def set_item_permission(
         self, workspace_id: int, path: str, actor_id: str, permission: str

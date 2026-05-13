@@ -273,15 +273,27 @@ def create_api_router() -> APIRouter:
         request: Request,
         actor: dict = Depends(current_actor),
     ):
+        db = _db(request)
         try:
             name = normalize_workspace_name(payload.name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        workspace = _db(request).create_workspace(
+        member_permissions: dict[str, str] = {}
+        for member in payload.members:
+            if not db.get_actor(member.actor_id):
+                raise HTTPException(status_code=404, detail="actor not found")
+            if member.actor_id == actor["actor_id"]:
+                continue
+            member_permissions[member.actor_id] = member.permission
+        workspace = db.create_workspace(
             name=name,
             kind=payload.kind,
             owner_actor_id=actor["actor_id"],
             created_by=actor["actor_id"],
+            members=[
+                {"actor_id": actor_id, "permission": permission}
+                for actor_id, permission in member_permissions.items()
+            ],
         )
         ensure_workspace(_config(request).storage_dir, workspace["id"])
         return {"workspace": workspace}
@@ -328,6 +340,22 @@ def create_api_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
+
+    @router.delete("/api/workspaces/{workspace_name}")
+    async def delete_workspace(
+        workspace_name: str,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        workspace = workspace_or_404(db, workspace_name)
+        if workspace["kind"] != "share_group":
+            raise HTTPException(status_code=400, detail="only share_group workspaces can be deleted")
+        if not db.can_delete_workspace(actor, workspace["id"]):
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
+        db.delete_workspace(workspace["id"])
+        shutil.rmtree(_config(request).storage_dir / str(workspace["id"]), ignore_errors=True)
         return {"ok": True}
 
     @router.get("/api/files")

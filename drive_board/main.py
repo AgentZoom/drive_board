@@ -29,6 +29,14 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     async def index():
         return FileResponse(WEB_DIR / "index.html")
 
+    @app.get("/app")
+    async def app_index():
+        return FileResponse(WEB_DIR / "index.html")
+
+    @app.get("/app/{frontend_path:path}")
+    async def app_index_path(frontend_path: str):
+        return FileResponse(WEB_DIR / "index.html")
+
     @app.get("/healthz")
     async def healthz():
         return {"ok": True}

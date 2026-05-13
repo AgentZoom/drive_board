@@ -32,6 +32,15 @@ def test_login_and_token_identity(tmp_path):
     assert agent.json()["actor"]["actor_id"] == "agent:main-agent"
 
 
+def test_app_routes_return_spa_shell(tmp_path):
+    client = make_client(tmp_path)
+
+    for path in ["/app/files/huangshiyu/notes", "/app/share-manager/huangshiyu"]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "Online Drive" in response.text
+
+
 def test_self_profile_update(tmp_path):
     client = make_client(tmp_path)
 
@@ -227,8 +236,21 @@ def test_share_member_and_actor_management_routes(tmp_path):
     client = make_client(tmp_path)
 
     login(client)
-    create_workspace = client.post("/api/workspaces", json={"name": "team-alpha", "kind": "share_group"})
+    create_workspace = client.post(
+        "/api/workspaces",
+        json={
+            "name": "team-alpha",
+            "kind": "share_group",
+            "members": [{"actor_id": "agent:main-agent", "permission": "read"}],
+        },
+    )
     assert create_workspace.status_code == 200, create_workspace.text
+
+    members = client.get("/api/workspaces/team-alpha/members")
+    assert members.status_code == 200, members.text
+    member_permissions = {item["actor_id"]: item["permission"] for item in members.json()["members"]}
+    assert member_permissions["user:huangshiyu"] == "owner"
+    assert member_permissions["agent:main-agent"] == "read"
 
     share = client.post(
         "/api/shares",
@@ -249,12 +271,6 @@ def test_share_member_and_actor_management_routes(tmp_path):
     deleted = client.delete(f"/api/shares/{share_id}")
     assert deleted.status_code == 200, deleted.text
 
-    add_member = client.post(
-        "/api/workspaces/team-alpha/members",
-        json={"actor_id": "agent:main-agent", "permission": "read"},
-    )
-    assert add_member.status_code == 200, add_member.text
-
     update_member = client.post(
         "/api/workspaces/team-alpha/members",
         json={"actor_id": "agent:main-agent", "permission": "write"},
@@ -264,6 +280,16 @@ def test_share_member_and_actor_management_routes(tmp_path):
 
     remove_member = client.delete("/api/workspaces/team-alpha/members/agent:main-agent")
     assert remove_member.status_code == 200, remove_member.text
+
+    delete_workspace = client.delete("/api/workspaces/team-alpha")
+    assert delete_workspace.status_code == 200, delete_workspace.text
+
+    deleted_members = client.get("/api/workspaces/team-alpha/members")
+    assert deleted_members.status_code == 404, deleted_members.text
+
+    listed_workspaces = client.get("/api/workspaces")
+    assert listed_workspaces.status_code == 200, listed_workspaces.text
+    assert all(item["name"] != "team-alpha" for item in listed_workspaces.json()["workspaces"])
 
     login(client, "admin", "admin")
     create_actor = client.post(
