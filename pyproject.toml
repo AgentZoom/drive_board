@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drive-board"
+version = "0.1.0"
+description = "Human and agent friendly web drive system."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "httpx>=0.26",
+  "markdown-it-py>=3.0",
+  "python-multipart>=0.0.9",
+  "rich>=13.7",
+  "typer>=0.12",
+  "uvicorn[standard]>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+drive-board = "drive_board.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["drive_board*"]
+
+[tool.setuptools.package-data]
+drive_board = ["web/*.html", "web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

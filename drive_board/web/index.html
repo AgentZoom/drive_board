@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Drive Board</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="loginView" class="login-shell hidden">
+      <section class="login-panel">
+        <div class="brand-row">
+          <div class="brand-mark">D</div>
+          <div>
+            <h1>Drive Board</h1>
+            <p>人类和 Agent 共用的网盘工作台</p>
+          </div>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>
+            <span>账号</span>
+            <input name="username" autocomplete="username" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">登录</button>
+          <div id="loginError" class="form-error"></div>
+        </form>
+      </section>
+    </main>
+
+    <main id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="brand-mark small">D</div>
+          <div>
+            <strong>Drive Board</strong>
+            <span id="actorLabel"></span>
+          </div>
+        </div>
+        <button id="newGroupBtn" class="sidebar-action">新建共享空间</button>
+        <section>
+          <h2>Workspaces</h2>
+          <div id="workspaceList" class="nav-list"></div>
+        </section>
+        <section>
+          <h2>Shared</h2>
+          <div id="sharedList" class="nav-list muted-list"></div>
+        </section>
+        <button id="adminBtn" class="sidebar-action secondary hidden">成员管理</button>
+        <button id="logoutBtn" class="sidebar-action secondary">退出登录</button>
+      </aside>
+
+      <section class="main-region">
+        <header class="topbar">
+          <div>
+            <div id="breadcrumb" class="breadcrumb"></div>
+            <h1 id="workspaceTitle">Drive Board</h1>
+          </div>
+          <div class="toolbar">
+            <button id="uploadBtn">上传</button>
+            <button id="folderBtn">新建文件夹</button>
+            <button id="textBtn">新建文本</button>
+            <button id="shareBtn">分享</button>
+            <button id="membersBtn" class="hidden">成员</button>
+          </div>
+          <input id="fileInput" type="file" class="hidden" />
+        </header>
+
+        <div class="content-grid">
+          <section class="file-pane">
+            <div class="pane-head">
+              <span id="pathLabel"></span>
+              <span id="permissionLabel"></span>
+            </div>
+            <div class="file-table-wrap">
+              <table class="file-table">
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>大小</th>
+                    <th>更新时间</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="fileRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="preview-pane">
+            <div class="pane-head">
+              <span id="previewTitle">预览</span>
+              <button id="saveTextBtn" class="hidden">保存</button>
+            </div>
+            <div id="previewBody" class="preview-body empty-state"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="modal">
+      <form method="dialog" id="modalForm">
+        <div id="modalBody"></div>
+        <menu>
+          <button value="cancel" class="secondary">取消</button>
+          <button id="modalConfirm" value="default">确认</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
