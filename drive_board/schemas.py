@@ -18,6 +18,19 @@ class ActorCreate(BaseModel):
     is_admin: bool = False
 
 
+class ActorUpdate(BaseModel):
+    display_name: str | None = None
+    password: str | None = None
+    token: str | None = None
+    is_admin: bool | None = None
+    is_active: bool | None = None
+
+
+class SelfUpdate(BaseModel):
+    display_name: str | None = None
+    password: str | None = None
+
+
 class WorkspaceCreate(BaseModel):
     name: str
     kind: str = Field(default="share_group", pattern="^(share_group)$")
@@ -39,8 +52,25 @@ class TextWrite(BaseModel):
     content: str
 
 
+class PathCopyOrMove(BaseModel):
+    workspace: str
+    source_path: str
+    destination_path: str
+
+
+class PathRename(BaseModel):
+    workspace: str
+    path: str
+    new_name: str
+
+
 class ShareCreate(BaseModel):
     workspace: str
     path: str = ""
     actor_id: str
     permission: str = Field(pattern="^(read|write)$")
+
+
+class PublicLinkCreate(BaseModel):
+    workspace: str
+    path: str

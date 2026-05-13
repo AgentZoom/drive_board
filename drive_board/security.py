@@ -42,3 +42,7 @@ def new_session_token() -> str:
 
 def new_agent_token() -> str:
     return "dbd_" + secrets.token_urlsafe(30)
+
+
+def new_public_link_token() -> str:
+    return "dbl_" + secrets.token_urlsafe(24)

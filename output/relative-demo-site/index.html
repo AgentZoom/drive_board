@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Relative Asset Demo</title>
+    <link rel="stylesheet" href="./assets/style.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero-card">
+        <p class="eyebrow">Relative Asset Example</p>
+        <h1>Index HTML loading CSS and JS from a local assets folder.</h1>
+        <p class="hero-copy">
+          This page is intended for Drive Board upload testing. The stylesheet is loaded from
+          <code>./assets/style.css</code> and the script is loaded from <code>./assets/test.js</code>.
+        </p>
+        <div class="hero-actions">
+          <button id="demoButton" type="button">Run Demo Script</button>
+          <span id="statusText">Waiting for interaction.</span>
+        </div>
+      </section>
+    </main>
+    <script src="./assets/test.js"></script>
+  </body>
+  </html>

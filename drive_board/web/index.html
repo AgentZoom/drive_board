@@ -3,20 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Drive Board</title>
+    <title>Online Drive</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main id="loginView" class="login-shell hidden">
       <section class="login-panel">
-        <div class="brand-row">
-          <div class="brand-mark">D</div>
-          <div>
-            <h1>Drive Board</h1>
-            <p>人类和 Agent 共用的网盘工作台</p>
-          </div>
-        </div>
+        <h1>登录</h1>
+        <p class="login-copy">请输入账号和密码。</p>
         <form id="loginForm" class="login-form">
           <label>
             <span>账号</span>
@@ -37,78 +32,159 @@
         <div class="sidebar-head">
           <div class="brand-mark small">D</div>
           <div>
-            <strong>Drive Board</strong>
+            <strong>Online Drive</strong>
             <span id="actorLabel"></span>
           </div>
         </div>
-        <button id="newGroupBtn" class="sidebar-action">新建共享空间</button>
-        <section>
-          <h2>Workspaces</h2>
-          <div id="workspaceList" class="nav-list"></div>
+        <section class="sidebar-block">
+          <details id="workspaceSwitcher" class="workspace-switcher">
+            <summary class="workspace-switch-summary">
+              <span class="workspace-switch-copy">
+                <strong id="workspaceSwitchLabel">请选择</strong>
+                <span id="workspaceSwitchMeta">暂无可用空间</span>
+              </span>
+              <span class="workspace-switch-side">
+                <span id="workspaceSwitchPill" class="workspace-switch-pill">-</span>
+                <span class="workspace-switch-caret" aria-hidden="true"></span>
+              </span>
+            </summary>
+            <div id="workspaceList" class="workspace-menu"></div>
+          </details>
         </section>
-        <section>
-          <h2>Shared</h2>
-          <div id="sharedList" class="nav-list muted-list"></div>
-        </section>
-        <button id="adminBtn" class="sidebar-action secondary hidden">成员管理</button>
-        <button id="logoutBtn" class="sidebar-action secondary">退出登录</button>
+        <nav class="sidebar-nav" aria-label="主导航">
+          <button id="fileListNavBtn" class="sidebar-action secondary nav-button is-active">文件列表</button>
+          <button id="sharedNavBtn" class="sidebar-action secondary nav-button shared-nav-button">
+            <span>与我共享</span>
+            <span id="sharedCount" class="sidebar-action-pill">0</span>
+          </button>
+          <button id="shareManagerNavBtn" class="sidebar-action secondary nav-button">分享管理</button>
+          <button id="newGroupBtn" class="sidebar-action nav-button">新建共享空间</button>
+          <button id="adminBtn" class="sidebar-action secondary nav-button hidden">成员管理</button>
+          <button id="profileNavBtn" class="sidebar-action secondary nav-button">个人设置</button>
+          <button id="logoutBtn" class="sidebar-action secondary nav-button">退出登录</button>
+        </nav>
       </aside>
 
       <section class="main-region">
-        <header class="topbar">
+        <header id="topbar" class="topbar">
           <div>
             <div id="breadcrumb" class="breadcrumb"></div>
-            <h1 id="workspaceTitle">Drive Board</h1>
           </div>
-          <div class="toolbar">
+          <div id="fileToolbar" class="toolbar">
             <button id="uploadBtn">上传</button>
             <button id="folderBtn">新建文件夹</button>
             <button id="textBtn">新建文本</button>
-            <button id="shareBtn">分享</button>
-            <button id="membersBtn" class="hidden">成员</button>
+            <button id="membersBtn" class="hidden">空间成员</button>
           </div>
-          <input id="fileInput" type="file" class="hidden" />
+          <input id="fileInput" type="file" class="hidden" multiple />
         </header>
 
-        <div class="content-grid">
-          <section class="file-pane">
-            <div class="pane-head">
-              <span id="pathLabel"></span>
-              <span id="permissionLabel"></span>
-            </div>
-            <div class="file-table-wrap">
-              <table class="file-table">
-                <thead>
-                  <tr>
-                    <th>名称</th>
-                    <th>类型</th>
-                    <th>大小</th>
-                    <th>更新时间</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="fileRows"></tbody>
-              </table>
-            </div>
-          </section>
+        <section id="browserView" class="browser-view">
+          <div id="contentGrid" class="content-grid">
+            <section class="file-pane">
+              <div class="file-tools">
+                <label class="search-control">
+                  <input id="fileSearchInput" type="search" placeholder="搜索当前列表中的文件或文件夹" aria-label="搜索当前列表中的文件或文件夹" />
+                </label>
+              </div>
+              <div class="file-table-wrap">
+                <table class="file-table">
+                  <thead>
+                    <tr>
+                      <th>
+                        <button type="button" class="sort-header" data-sort-field="name">
+                          <span>名称</span>
+                          <span class="sort-arrow" data-sort-indicator="name" aria-hidden="true"></span>
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="sort-header" data-sort-field="size">
+                          <span>大小</span>
+                          <span class="sort-arrow" data-sort-indicator="size" aria-hidden="true"></span>
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="sort-header" data-sort-field="modified_at">
+                          <span>更新时间</span>
+                          <span class="sort-arrow" data-sort-indicator="modified_at" aria-hidden="true"></span>
+                        </button>
+                      </th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="fileRows"></tbody>
+                </table>
+              </div>
+              <div id="filePagination" class="pagination-bar">
+                <div id="pageStatus" class="page-status">当前第 1 页 / 总 1 页</div>
+                <div class="pagination-actions">
+                  <button id="firstPageBtn" type="button" class="secondary">首页</button>
+                  <button id="prevPageBtn" type="button" class="secondary">前一页</button>
+                  <button id="nextPageBtn" type="button" class="secondary">下一页</button>
+                  <button id="lastPageBtn" type="button" class="secondary">尾页</button>
+                  <label class="page-size-control">
+                    <span>每页</span>
+                    <select id="pageSizeSelect">
+                      <option value="10">10</option>
+                      <option value="20" selected>20</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </section>
 
-          <section class="preview-pane">
-            <div class="pane-head">
-              <span id="previewTitle">预览</span>
-              <button id="saveTextBtn" class="hidden">保存</button>
+            <section id="detailPane" class="detail-pane hidden">
+            </section>
+          </div>
+        </section>
+
+        <dialog id="previewModal" class="preview-dialog">
+          <div class="pane-head">
+            <div class="pane-title-group">
+              <span id="detailModeLabel">详情</span>
+              <strong id="previewTitle">预览</strong>
             </div>
-            <div id="previewBody" class="preview-body empty-state"></div>
-          </section>
+            <div class="pane-actions">
+              <button id="previewOpenBtn" class="secondary hidden" type="button">新窗口打开</button>
+              <button id="saveTextBtn" class="hidden" type="button">保存</button>
+              <button id="closeDetailBtn" class="secondary" type="button">关闭</button>
+            </div>
+          </div>
+          <div id="previewBody" class="preview-body preview-modal-body empty-state">点击文件的预览或编辑按钮后在这里查看内容</div>
+        </dialog>
+
+        <section id="managerView" class="manager-view hidden">
+          <div id="managerBody" class="manager-body empty-state">请选择一个管理动作。</div>
+        </section>
+
+        <section id="uploadDock" class="upload-dock hidden">
+          <button id="uploadDropzone" class="upload-dropzone" type="button">
+            <span class="upload-drop-icon" aria-hidden="true">⇪</span>
+            <span class="upload-drop-copy">
+              <strong id="uploadDockTitle">拖拽上传</strong>
+              <span id="uploadDockHint">拖拽文件到这里，或点击选择文件</span>
+            </span>
+          </button>
+        </section>
+
+        <div id="dropOverlay" class="drop-overlay" aria-hidden="true">
+          <div class="drop-overlay-card">
+            <div class="drop-overlay-icon" aria-hidden="true">⇪</div>
+            <div class="drop-overlay-title">松手即可上传文件</div>
+            <div class="drop-overlay-hint">文件会直接上传到当前文件夹</div>
+          </div>
         </div>
       </section>
     </main>
 
     <dialog id="modal">
-      <form method="dialog" id="modalForm">
+      <form id="modalForm">
         <div id="modalBody"></div>
         <menu>
-          <button value="cancel" class="secondary">取消</button>
-          <button id="modalConfirm" value="default">确认</button>
+          <button id="modalCancel" type="button" class="secondary">取消</button>
+          <button id="modalConfirm" type="submit">确认</button>
         </menu>
       </form>
     </dialog>

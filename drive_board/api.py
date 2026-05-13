@@ -21,24 +21,32 @@ from markdown_it import MarkdownIt
 from .db import Database, normalize_workspace_name, public_actor
 from .schemas import (
     ActorCreate,
+    ActorUpdate,
     FolderCreate,
     LoginRequest,
     MemberUpdate,
+    PublicLinkCreate,
+    PathCopyOrMove,
+    PathRename,
+    SelfUpdate,
     ShareCreate,
     TextWrite,
     WorkspaceCreate,
 )
 from .security import new_session_token, verify_password
 from .storage import (
+    copy_path,
     delete_path,
     ensure_workspace,
     guess_media_type,
     list_directory,
     make_folder,
+    move_path,
     normalize_path,
     parent_path,
     preview_type,
     read_text,
+    rename_path,
     resolve_path,
     write_text,
 )
@@ -104,6 +112,12 @@ def require_permission(
 def create_api_router() -> APIRouter:
     router = APIRouter()
 
+    def public_link_payload(link: dict) -> dict:
+        return {
+            **link,
+            "download_url": f"/public/{link['token']}",
+        }
+
     @router.post("/api/login")
     async def login(request: Request, payload: LoginRequest, response: Response):
         db = _db(request)
@@ -154,6 +168,22 @@ def create_api_router() -> APIRouter:
     async def me(actor: dict = Depends(current_actor)):
         return {"actor": public_actor(actor)}
 
+    @router.patch("/api/me")
+    async def update_me(
+        payload: SelfUpdate,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        try:
+            updated = _db(request).update_actor(
+                actor["actor_id"],
+                display_name=payload.display_name,
+                password=payload.password,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"actor": updated}
+
     @router.get("/api/actors")
     async def actors(
         request: Request,
@@ -189,6 +219,46 @@ def create_api_router() -> APIRouter:
         if workspace:
             ensure_workspace(_config(request).storage_dir, workspace["id"])
         return {"actor": created, "token": token}
+
+    @router.patch("/api/actors/{actor_id}")
+    async def update_actor(
+        actor_id: str,
+        payload: ActorUpdate,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        require_admin(actor)
+        db = _db(request)
+        if not db.get_actor(actor_id):
+            raise HTTPException(status_code=404, detail="actor not found")
+        try:
+            updated = db.update_actor(
+                actor_id,
+                display_name=payload.display_name,
+                password=payload.password,
+                token=payload.token,
+                is_admin=payload.is_admin,
+                is_active=payload.is_active,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"actor": updated}
+
+    @router.delete("/api/actors/{actor_id}")
+    async def delete_actor(
+        actor_id: str,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        require_admin(actor)
+        db = _db(request)
+        if not db.get_actor(actor_id):
+            raise HTTPException(status_code=404, detail="actor not found")
+        try:
+            db.update_actor(actor_id, is_active=False)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
 
     @router.get("/api/workspaces")
     async def workspaces(request: Request, actor: dict = Depends(current_actor)):
@@ -240,6 +310,25 @@ def create_api_router() -> APIRouter:
         if not db.get_actor(payload.actor_id):
             raise HTTPException(status_code=404, detail="actor not found")
         return {"member": db.set_member(workspace["id"], payload.actor_id, payload.permission)}
+
+    @router.delete("/api/workspaces/{workspace_name}/members/{actor_id}")
+    async def delete_member(
+        workspace_name: str,
+        actor_id: str,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        workspace = workspace_or_404(db, workspace_name)
+        if not db.can_write_workspace_members(actor, workspace["id"]):
+            raise HTTPException(status_code=403, detail="workspace write permission required")
+        try:
+            db.delete_member(workspace["id"], actor_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
 
     @router.get("/api/files")
     async def list_files(
@@ -363,7 +452,99 @@ def create_api_router() -> APIRouter:
             delete_path(_config(request).storage_dir, ws["id"], normalized)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="path not found") from exc
+        db.delete_public_links_for_path(ws["id"], normalized)
         return {"ok": True}
+
+    @router.post("/api/files/copy")
+    async def copy_file(
+        payload: PathCopyOrMove,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        ws = workspace_or_404(db, payload.workspace)
+        source = normalize_path(payload.source_path)
+        destination = normalize_path(payload.destination_path)
+        require_permission(db, actor, ws, source, "read")
+        require_permission(db, actor, ws, parent_path(destination), "write")
+        try:
+            copy_path(_config(request).storage_dir, ws["id"], source, destination)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="source path not found") from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail="destination path already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        target = resolve_path(_config(request).storage_dir, ws["id"], destination)
+        return {
+            "workspace": payload.workspace,
+            "path": destination,
+            "kind": "folder" if target.is_dir() else "file",
+            "preview_type": preview_type(destination, target.is_dir()),
+        }
+
+    @router.post("/api/files/move")
+    async def move_file(
+        payload: PathCopyOrMove,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        ws = workspace_or_404(db, payload.workspace)
+        source = normalize_path(payload.source_path)
+        destination = normalize_path(payload.destination_path)
+        require_permission(db, actor, ws, source, "write")
+        require_permission(db, actor, ws, parent_path(destination), "write")
+        try:
+            move_path(_config(request).storage_dir, ws["id"], source, destination)
+            db.move_item_permissions(ws["id"], source, destination)
+            db.move_public_links(ws["id"], source, destination)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="source path not found") from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail="destination path already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        target = resolve_path(_config(request).storage_dir, ws["id"], destination)
+        return {
+            "workspace": payload.workspace,
+            "path": destination,
+            "kind": "folder" if target.is_dir() else "file",
+            "preview_type": preview_type(destination, target.is_dir()),
+        }
+
+    @router.post("/api/files/rename")
+    async def rename_file(
+        payload: PathRename,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        ws = workspace_or_404(db, payload.workspace)
+        source = normalize_path(payload.path)
+        require_permission(db, actor, ws, source, "write")
+        try:
+            destination = rename_path(
+                _config(request).storage_dir,
+                ws["id"],
+                source,
+                payload.new_name,
+            )
+            db.move_item_permissions(ws["id"], source, destination)
+            db.move_public_links(ws["id"], source, destination)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="source path not found") from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail="destination path already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        target = resolve_path(_config(request).storage_dir, ws["id"], destination)
+        return {
+            "workspace": payload.workspace,
+            "path": destination,
+            "kind": "folder" if target.is_dir() else "file",
+            "preview_type": preview_type(destination, target.is_dir()),
+        }
 
     @router.get("/api/files/download")
     async def download_file(
@@ -436,14 +617,80 @@ def create_api_router() -> APIRouter:
         require_permission(db, actor, ws, path or "", "write")
         return {"shares": db.list_item_permissions(ws["id"], path)}
 
+    @router.post("/api/public-links")
+    async def create_public_link(
+        payload: PublicLinkCreate,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        ws = workspace_or_404(db, payload.workspace)
+        normalized = normalize_path(payload.path)
+        require_permission(db, actor, ws, normalized, "write")
+        if not normalized:
+            raise HTTPException(status_code=400, detail="public links require a file path")
+        target = resolve_path(_config(request).storage_dir, ws["id"], normalized)
+        if not target.exists() or target.is_dir():
+            raise HTTPException(status_code=400, detail="public links only support files")
+        link = db.create_public_link(ws["id"], normalized, actor["actor_id"])
+        return {"public_link": public_link_payload(link)}
+
+    @router.get("/api/public-links")
+    async def list_public_links(
+        request: Request,
+        workspace: str,
+        path: str | None = None,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        ws = workspace_or_404(db, workspace)
+        if path is None:
+            require_permission(db, actor, ws, "", "write")
+            return {
+                "target_kind": "workspace",
+                "public_links": [public_link_payload(link) for link in db.list_public_links(ws["id"])],
+            }
+        normalized = normalize_path(path)
+        require_permission(db, actor, ws, normalized, "write")
+        if not normalized:
+            return {"target_kind": "folder", "public_links": []}
+        target = resolve_path(_config(request).storage_dir, ws["id"], normalized)
+        if not target.exists():
+            raise HTTPException(status_code=404, detail="path not found")
+        target_kind = "folder" if target.is_dir() else "file"
+        return {
+            "target_kind": target_kind,
+            "public_links": [public_link_payload(link) for link in db.list_public_links(ws["id"], normalized)],
+        }
+
+    @router.delete("/api/public-links/{link_id}")
+    async def remove_public_link(
+        link_id: int,
+        request: Request,
+        actor: dict = Depends(current_actor),
+    ):
+        db = _db(request)
+        link = db.get_public_link(link_id)
+        if not link:
+            raise HTTPException(status_code=404, detail="public link not found")
+        workspace = workspace_or_404(db, link["workspace_id"])
+        require_permission(db, actor, workspace, link["path"], "write")
+        db.delete_public_link(link_id)
+        return {"ok": True}
+
     @router.delete("/api/shares/{share_id}")
     async def remove_share(
         share_id: int,
         request: Request,
         actor: dict = Depends(current_actor),
     ):
-        require_admin(actor)
-        _db(request).delete_item_permission(share_id)
+        db = _db(request)
+        share = db.get_item_permission(share_id)
+        if not share:
+            raise HTTPException(status_code=404, detail="share not found")
+        workspace = workspace_or_404(db, share["workspace_id"])
+        require_permission(db, actor, workspace, share["path"], "write")
+        db.delete_item_permission(share_id)
         return {"ok": True}
 
     @router.get("/api/shared")
@@ -480,6 +727,25 @@ def create_api_router() -> APIRouter:
         return FileResponse(
             target,
             media_type=guess_media_type(normalized),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/public/{token}")
+    async def public_download(token: str, request: Request):
+        db = _db(request)
+        link = db.get_public_link_by_token(token)
+        if not link:
+            raise HTTPException(status_code=404, detail="public link not found")
+        workspace = db.get_workspace(link["workspace_id"])
+        if not workspace:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        target = resolve_path(_config(request).storage_dir, workspace["id"], link["path"])
+        if not target.exists() or target.is_dir():
+            raise HTTPException(status_code=404, detail="file not found")
+        return FileResponse(
+            target,
+            media_type=guess_media_type(link["path"]),
+            filename=Path(link["path"]).name,
             headers={"Cache-Control": "no-store"},
         )
 

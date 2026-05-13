@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import AppConfig
-from .security import hash_password, hash_token, new_agent_token
+from .security import hash_password, hash_token, new_agent_token, new_public_link_token
 from .storage import normalize_path, path_is_within
 
 
@@ -42,6 +42,12 @@ def normalize_workspace_name(name: str) -> str:
             "workspace name must be 2-63 chars and use letters, numbers, dot, dash, or underscore"
         )
     return cleaned
+
+
+def remap_descendant_path(path: str, source: str, destination: str) -> str:
+    if path == source:
+        return destination
+    return f"{destination}/{path[len(source) + 1:]}"
 
 
 class Database:
@@ -107,10 +113,21 @@ class Database:
                     UNIQUE (workspace_id, path, actor_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS public_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL,
+                    token TEXT NOT NULL UNIQUE,
+                    created_by TEXT REFERENCES actors(actor_id) ON DELETE SET NULL,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_members_actor ON workspace_members(actor_id);
                 CREATE INDEX IF NOT EXISTS idx_item_permissions_actor ON item_permissions(actor_id);
                 CREATE INDEX IF NOT EXISTS idx_item_permissions_workspace_path
                     ON item_permissions(workspace_id, path);
+                CREATE INDEX IF NOT EXISTS idx_public_links_workspace_path
+                    ON public_links(workspace_id, path);
                 """
             )
             count = connection.execute("SELECT COUNT(*) FROM actors").fetchone()[0]
@@ -301,6 +318,65 @@ class Database:
             rows = connection.execute(query, params).fetchall()
             return [public_actor(dict(row)) for row in rows]
 
+    def update_actor(
+        self,
+        actor_id: str,
+        *,
+        display_name: str | None = None,
+        password: str | None = None,
+        token: str | None = None,
+        is_admin: bool | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any]:
+        with closing(self.connect()) as connection:
+            actor = self.get_actor(actor_id, connection=connection)
+            if not actor:
+                raise KeyError("actor not found")
+
+            next_is_admin = bool(actor["is_admin"]) if is_admin is None else bool(is_admin)
+            next_is_active = bool(actor["is_active"]) if is_active is None else bool(is_active)
+            if actor["is_admin"] and actor["is_active"] and not (next_is_admin and next_is_active):
+                admin_count = connection.execute(
+                    "SELECT COUNT(*) FROM actors WHERE is_admin = 1 AND is_active = 1"
+                ).fetchone()[0]
+                if admin_count <= 1:
+                    raise ValueError("cannot disable the last active admin")
+
+            updates: list[str] = []
+            params: list[Any] = []
+            if display_name is not None:
+                updates.append("display_name = ?")
+                params.append(display_name.strip() or actor_id)
+            if password is not None:
+                if actor["kind"] != "user":
+                    raise ValueError("only human users can update passwords")
+                updates.append("password_hash = ?")
+                params.append(hash_password(password))
+            if token is not None:
+                if actor["kind"] != "agent":
+                    raise ValueError("only agents can update tokens")
+                updates.append("token_hash = ?")
+                params.append(hash_token(token))
+            if is_admin is not None:
+                updates.append("is_admin = ?")
+                params.append(1 if is_admin else 0)
+            if is_active is not None:
+                updates.append("is_active = ?")
+                params.append(1 if is_active else 0)
+
+            if updates:
+                params.extend([actor_id])
+                connection.execute(
+                    f"UPDATE actors SET {', '.join(updates)} WHERE actor_id = ?",
+                    params,
+                )
+            if is_active is False:
+                connection.execute("DELETE FROM sessions WHERE actor_id = ?", (actor_id,))
+            connection.commit()
+            updated = self.get_actor(actor_id, connection=connection)
+            assert updated is not None
+            return public_actor(updated)
+
     def create_workspace(
         self,
         *,
@@ -420,6 +496,27 @@ class Database:
             connection.commit()
         return {"workspace_id": workspace_id, "actor_id": actor_id, "permission": permission}
 
+    def delete_member(self, workspace_id: int, actor_id: str) -> None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                "SELECT permission FROM workspace_members WHERE workspace_id = ? AND actor_id = ?",
+                (workspace_id, actor_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("member not found")
+            if row["permission"] == "owner":
+                owner_count = connection.execute(
+                    "SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ? AND permission = 'owner'",
+                    (workspace_id,),
+                ).fetchone()[0]
+                if owner_count <= 1:
+                    raise ValueError("cannot remove the last owner")
+            connection.execute(
+                "DELETE FROM workspace_members WHERE workspace_id = ? AND actor_id = ?",
+                (workspace_id, actor_id),
+            )
+            connection.commit()
+
     def permission_for(
         self,
         actor: dict[str, Any],
@@ -510,6 +607,14 @@ class Database:
             "permission": permission,
         }
 
+    def get_item_permission(self, item_id: int) -> dict[str, Any] | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM item_permissions WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            return row_to_dict(row)
+
     def list_item_permissions(
         self, workspace_id: int, path: str | None = None
     ) -> list[dict[str, Any]]:
@@ -530,6 +635,161 @@ class Database:
     def delete_item_permission(self, item_id: int) -> None:
         with closing(self.connect()) as connection:
             connection.execute("DELETE FROM item_permissions WHERE id = ?", (item_id,))
+            connection.commit()
+
+    def create_public_link(
+        self,
+        workspace_id: int,
+        path: str,
+        created_by: str | None,
+    ) -> dict[str, Any]:
+        normalized = normalize_path(path)
+        if not normalized:
+            raise ValueError("public links require a file path")
+        with closing(self.connect()) as connection:
+            item_id: int | None = None
+            token: str | None = None
+            for _ in range(8):
+                token = new_public_link_token()
+                try:
+                    cursor = connection.execute(
+                        """
+                        INSERT INTO public_links (workspace_id, path, token, created_by, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (workspace_id, normalized, token, created_by, utcnow()),
+                    )
+                    item_id = cursor.lastrowid
+                    connection.commit()
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            if not item_id or not token:
+                raise ValueError("failed to create public link")
+            row = connection.execute(
+                """
+                SELECT p.*, a.display_name AS created_by_name
+                FROM public_links p
+                LEFT JOIN actors a ON a.actor_id = p.created_by
+                WHERE p.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+            assert row is not None
+            return dict(row)
+
+    def get_public_link(self, link_id: int) -> dict[str, Any] | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT p.*, a.display_name AS created_by_name
+                FROM public_links p
+                LEFT JOIN actors a ON a.actor_id = p.created_by
+                WHERE p.id = ?
+                """,
+                (link_id,),
+            ).fetchone()
+            return row_to_dict(row)
+
+    def get_public_link_by_token(self, token: str) -> dict[str, Any] | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT p.*, a.display_name AS created_by_name
+                FROM public_links p
+                LEFT JOIN actors a ON a.actor_id = p.created_by
+                WHERE p.token = ?
+                """,
+                (token,),
+            ).fetchone()
+            return row_to_dict(row)
+
+    def list_public_links(self, workspace_id: int, path: str | None = None) -> list[dict[str, Any]]:
+        normalized = normalize_path(path) if path is not None else None
+        params: list[Any] = [workspace_id]
+        query = """
+                SELECT p.*, a.display_name AS created_by_name
+                FROM public_links p
+                LEFT JOIN actors a ON a.actor_id = p.created_by
+                WHERE p.workspace_id = ?
+                """
+        if normalized is not None:
+            query += " AND p.path = ?"
+            params.append(normalized)
+        query += " ORDER BY p.created_at DESC, p.id DESC"
+        with closing(self.connect()) as connection:
+            rows = connection.execute(query, params).fetchall()
+            return [dict(row) for row in rows]
+
+    def delete_public_link(self, link_id: int) -> None:
+        with closing(self.connect()) as connection:
+            connection.execute("DELETE FROM public_links WHERE id = ?", (link_id,))
+            connection.commit()
+
+    def delete_public_links_for_path(self, workspace_id: int, path: str) -> None:
+        normalized = normalize_path(path)
+        if not normalized:
+            return
+        with closing(self.connect()) as connection:
+            connection.execute(
+                "DELETE FROM public_links WHERE workspace_id = ? AND (path = ? OR path LIKE ?)",
+                (workspace_id, normalized, f"{normalized}/%"),
+            )
+            connection.commit()
+
+    def move_public_links(self, workspace_id: int, source_path: str, destination_path: str) -> None:
+        source = normalize_path(source_path)
+        destination = normalize_path(destination_path)
+        if not source or not destination:
+            raise ValueError("source and destination must not be empty")
+        with closing(self.connect()) as connection:
+            rows = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id, path FROM public_links WHERE workspace_id = ?",
+                    (workspace_id,),
+                ).fetchall()
+            ]
+            moving_rows = [row for row in rows if path_is_within(source, row["path"])]
+            if not moving_rows:
+                return
+            for row in moving_rows:
+                connection.execute(
+                    "UPDATE public_links SET path = ? WHERE id = ?",
+                    (remap_descendant_path(row["path"], source, destination), row["id"]),
+                )
+            connection.commit()
+
+    def move_item_permissions(self, workspace_id: int, source_path: str, destination_path: str) -> None:
+        source = normalize_path(source_path)
+        destination = normalize_path(destination_path)
+        if not source or not destination:
+            raise ValueError("source and destination must not be empty")
+        with closing(self.connect()) as connection:
+            rows = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id, actor_id, path FROM item_permissions WHERE workspace_id = ?",
+                    (workspace_id,),
+                ).fetchall()
+            ]
+            moving_rows = [row for row in rows if path_is_within(source, row["path"])]
+            if not moving_rows:
+                return
+            moving_ids = {row["id"] for row in moving_rows}
+            existing = {(row["actor_id"], row["path"]): row["id"] for row in rows}
+            updates: list[tuple[str, int]] = []
+            for row in moving_rows:
+                new_path = remap_descendant_path(row["path"], source, destination)
+                conflict_id = existing.get((row["actor_id"], new_path))
+                if conflict_id and conflict_id not in moving_ids:
+                    raise ValueError("destination conflicts with an existing share path")
+                updates.append((new_path, row["id"]))
+            for new_path, item_id in updates:
+                connection.execute(
+                    "UPDATE item_permissions SET path = ? WHERE id = ?",
+                    (new_path, item_id),
+                )
             connection.commit()
 
     def list_shared_items(self, actor: dict[str, Any]) -> list[dict[str, Any]]:

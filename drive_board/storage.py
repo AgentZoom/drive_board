@@ -150,3 +150,53 @@ def delete_path(storage_dir: Path, workspace_id: int, path: str) -> None:
         shutil.rmtree(target)
     else:
         target.unlink()
+
+
+def _validate_transfer(source_path: str, destination_path: str, source: Path, destination: Path) -> None:
+    if not source_path:
+        raise ValueError("source path must not be empty")
+    if not destination_path:
+        raise ValueError("destination path must not be empty")
+    if source_path == destination_path:
+        raise ValueError("source and destination cannot be the same")
+    if not source.exists():
+        raise FileNotFoundError(source_path)
+    if not destination.parent.exists() or not destination.parent.is_dir():
+        raise ValueError("destination parent folder not found")
+    if destination.exists():
+        raise FileExistsError(destination_path)
+    if source.is_dir() and path_is_within(source_path, destination_path):
+        raise ValueError("cannot move or copy a folder into itself")
+
+
+def copy_path(storage_dir: Path, workspace_id: int, source_path: str, destination_path: str) -> None:
+    source_normalized = normalize_path(source_path)
+    destination_normalized = normalize_path(destination_path)
+    source = resolve_path(storage_dir, workspace_id, source_normalized)
+    destination = resolve_path(storage_dir, workspace_id, destination_normalized)
+    _validate_transfer(source_normalized, destination_normalized, source, destination)
+    if source.is_dir():
+        shutil.copytree(source, destination)
+    else:
+        shutil.copy2(source, destination)
+
+
+def move_path(storage_dir: Path, workspace_id: int, source_path: str, destination_path: str) -> None:
+    source_normalized = normalize_path(source_path)
+    destination_normalized = normalize_path(destination_path)
+    source = resolve_path(storage_dir, workspace_id, source_normalized)
+    destination = resolve_path(storage_dir, workspace_id, destination_normalized)
+    _validate_transfer(source_normalized, destination_normalized, source, destination)
+    shutil.move(str(source), str(destination))
+
+
+def rename_path(storage_dir: Path, workspace_id: int, path: str, new_name: str) -> str:
+    source_normalized = normalize_path(path)
+    candidate = normalize_path(new_name)
+    if not source_normalized:
+        raise ValueError("path must not be empty")
+    if not candidate or "/" in candidate:
+        raise ValueError("new name must be a single path segment")
+    destination = f"{parent_path(source_normalized)}/{candidate}" if parent_path(source_normalized) else candidate
+    move_path(storage_dir, workspace_id, source_normalized, destination)
+    return destination
