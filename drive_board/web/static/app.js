@@ -1667,7 +1667,9 @@ function openModal(html, onConfirm, options = {}) {
   closeAllActionMenus();
   $("modalBody").innerHTML = html;
   $("modalConfirm").textContent = options.confirmLabel || "确认";
+  $("modalConfirm").classList.remove("danger-button");
   $("modalConfirm").classList.toggle("hidden", Boolean(options.hideConfirm));
+  $("modalConfirm").classList.toggle("danger-button", options.confirmVariant === "danger");
   $("modalCancel").textContent = options.cancelLabel || "取消";
   $("modalCancel").onclick = () => modal.close();
   form.onsubmit = async (event) => {
@@ -2223,6 +2225,7 @@ function confirmDelete(item) {
       toast("已删除");
       await loadFiles();
     },
+    { confirmLabel: "删除", confirmVariant: "danger" },
   );
 }
 
@@ -2696,7 +2699,7 @@ async function openWorkspaceMembersManager({ skipRouteSync = false, replaceRoute
           </div>
         </div>
         ${canDeleteWorkspace
-          ? `<div class="manager-actions"><button id="deleteWorkspaceBtn" type="button" class="secondary">删除共享空间</button></div>`
+            ? `<div class="manager-actions"><button id="deleteWorkspaceBtn" type="button" class="danger-button">删除共享空间</button></div>`
           : `<p class="field-hint">只有该空间的 owner 或管理员可以删除共享空间。</p>`}
       </section>
     </div>
@@ -2781,7 +2784,7 @@ async function openWorkspaceMembersManager({ skipRouteSync = false, replaceRoute
           toast("共享空间已删除");
           await openFileListView({ replaceRoute: true });
         },
-        { confirmLabel: "删除" },
+        { confirmLabel: "删除", confirmVariant: "danger" },
       );
     });
   }

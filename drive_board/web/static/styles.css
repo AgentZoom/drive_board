@@ -70,6 +70,19 @@ button.secondary:hover,
   background: var(--surface-alt);
 }
 
+button.danger-button,
+.danger-button {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.danger-button:hover,
+.danger-button:hover {
+  background: #9e2f2f;
+  border-color: #9e2f2f;
+}
+
 .hidden {
   display: none !important;
 }
@@ -1102,12 +1115,13 @@ textarea:focus {
 }
 
 .action-delete {
-  background: rgba(201, 97, 72, 0.12);
-  color: #a14a37;
+  border-color: rgba(184, 59, 59, 0.22);
+  background: linear-gradient(180deg, rgba(184, 59, 59, 0.18) 0%, rgba(184, 59, 59, 0.1) 100%);
+  color: var(--danger);
 }
 
 .action-delete:hover {
-  background: rgba(201, 97, 72, 0.2);
+  background: linear-gradient(180deg, rgba(184, 59, 59, 0.28) 0%, rgba(184, 59, 59, 0.16) 100%);
 }
 
 .action-pill-button:disabled,
