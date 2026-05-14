@@ -4,6 +4,8 @@
 
 CLI 统一通过 Bearer Token 鉴权，不使用网页端账号密码登录流程。
 
+如无特殊说明，本仓库里的 Agent 和自动化脚本默认都连接生产环境 `http://drive.mm-lab.cn/`；只有本地开发、联调或临时验证时才改到其他地址。
+
 ## Agent 快速规则
 
 1. 全局参数必须放在 `drive-board` 后、具体命令前，不要写在子命令后面。
@@ -26,7 +28,7 @@ drive-board [全局参数] <命令组或命令> [子命令] [位置参数] [命�
 正确示例：
 
 ```bash
-drive-board --server http://127.0.0.1:8362 --token main-agent-token --format json whoami
+drive-board --server http://drive.mm-lab.cn/ --token main-agent-token --format json whoami
 drive-board --token main-agent-token --format json files ls main-agent
 drive-board --token main-agent-token workspaces add-member research-team --actor agent:cli-agent --permission write
 ```
@@ -34,7 +36,7 @@ drive-board --token main-agent-token workspaces add-member research-team --actor
 环境变量也可以提供全局配置：
 
 ```bash
-export DRIVE_BOARD_SERVER="http://127.0.0.1:8362"
+export DRIVE_BOARD_SERVER="http://drive.mm-lab.cn/"
 export DRIVE_BOARD_TOKEN="main-agent-token"
 export DRIVE_BOARD_FORMAT="json"
 ```
@@ -43,7 +45,7 @@ export DRIVE_BOARD_FORMAT="json"
 
 | 参数             | 环境变量             | 默认值                  | 是否必需     | 说明                                                                                                         |
 | ---------------- | -------------------- | ----------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ |
-| `--server`       | `DRIVE_BOARD_SERVER` | `http://127.0.0.1:8362` | 否           | Drive Board 服务根地址。CLI 会自动去掉末尾 `/`，并用于把 `public-links` 返回的相对下载路径补成最终绝对链接。 |
+| `--server`       | `DRIVE_BOARD_SERVER` | `http://drive.mm-lab.cn/` | 否           | Drive Board 服务根地址。不显式传入时，默认就是生产环境 `http://drive.mm-lab.cn/`。CLI 会自动去掉末尾 `/`，并用于把 `public-links` 返回的相对下载路径补成最终绝对链接。 |
 | `--token`        | `DRIVE_BOARD_TOKEN`  | 无                      | 大多数命令是 | Bearer Token。未提供时，请求不会带 `Authorization` 头，通常会触发 401/403。                                  |
 | `--format`, `-f` | `DRIVE_BOARD_FORMAT` | `table`                 | 否           | 输出格式。允许值：`table`、`json`、`jsonl`。                                                                 |
 

@@ -23,6 +23,8 @@ drive-board serve --port 8362
 
 打开 `http://127.0.0.1:8362`。
 
+上面这组命令只用于本地开发或调试启动服务；如无特殊说明，Agent 和自动化脚本在实际使用时默认连接生产环境 `http://drive.mm-lab.cn/`。
+
 首次启动会创建 demo 身份：
 
 | 身份 | 登录或 Token |
@@ -36,8 +38,10 @@ drive-board serve --port 8362
 
 ## CLI
 
+如无特殊说明，CLI 默认使用生产环境 `http://drive.mm-lab.cn/`；只有本地开发或联调时才把 `DRIVE_BOARD_SERVER` 改成其他地址。
+
 ```bash
-export DRIVE_BOARD_SERVER="http://127.0.0.1:8362"
+export DRIVE_BOARD_SERVER="http://drive.mm-lab.cn/"
 export DRIVE_BOARD_TOKEN="main-agent-token"
 
 drive-board whoami
