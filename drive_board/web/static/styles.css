@@ -1025,9 +1025,9 @@ textarea:focus {
 }
 
 .action-submenu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  position: fixed;
+  top: -9999px;
+  left: -9999px;
   min-width: 148px;
   display: none;
   gap: 4px;
@@ -1040,8 +1040,7 @@ textarea:focus {
 }
 
 .action-submenu.open-upward {
-  top: auto;
-  bottom: calc(100% + 8px);
+  top: -9999px;
 }
 
 .action-submenu button {

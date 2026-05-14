@@ -891,7 +891,12 @@ function openHtmlPreview(workspace, path) {
 function closeAllActionMenus() {
   document.querySelectorAll(".action-menu.is-open").forEach((menu) => {
     menu.classList.remove("is-open");
-    menu.querySelector(".action-submenu")?.classList.remove("open-upward");
+    const submenu = menu.querySelector(".action-submenu");
+    submenu?.classList.remove("open-upward");
+    if (submenu) {
+      submenu.style.top = "";
+      submenu.style.left = "";
+    }
   });
 }
 
@@ -901,18 +906,29 @@ function positionActionMenu(menu) {
   if (!submenu) return;
 
   submenu.classList.remove("open-upward");
+  submenu.style.top = "";
+  submenu.style.left = "";
 
+  const viewportPadding = 12;
+  const gap = 8;
   const menuRect = menu.getBoundingClientRect();
-  const submenuRect = submenu.getBoundingClientRect();
-  const tableWrapRect = menu.closest(".file-table-wrap")?.getBoundingClientRect();
-  const paginationRect = $("filePagination")?.getBoundingClientRect();
-  const lowerBoundary = paginationRect?.top ?? tableWrapRect?.bottom ?? window.innerHeight;
-  const upperBoundary = tableWrapRect?.top ?? 0;
-  const availableBelow = lowerBoundary - menuRect.bottom - 8;
-  const availableAbove = menuRect.top - upperBoundary - 8;
-  const shouldOpenUpward = submenuRect.height > availableBelow && availableAbove > availableBelow;
+  const submenuWidth = submenu.offsetWidth;
+  const submenuHeight = submenu.offsetHeight;
+  const availableBelow = window.innerHeight - viewportPadding - menuRect.bottom - gap;
+  const availableAbove = menuRect.top - viewportPadding - gap;
+  const shouldOpenUpward = submenuHeight > availableBelow && availableAbove > availableBelow;
+
+  const top = shouldOpenUpward
+    ? Math.max(viewportPadding, menuRect.top - submenuHeight - gap)
+    : Math.min(window.innerHeight - viewportPadding - submenuHeight, menuRect.bottom + gap);
+  const left = Math.min(
+    Math.max(viewportPadding, menuRect.right - submenuWidth),
+    window.innerWidth - viewportPadding - submenuWidth,
+  );
 
   submenu.classList.toggle("open-upward", shouldOpenUpward);
+  submenu.style.top = `${Math.round(top)}px`;
+  submenu.style.left = `${Math.round(left)}px`;
 }
 
 function toggleActionMenu(menu) {
