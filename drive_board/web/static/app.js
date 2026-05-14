@@ -2761,7 +2761,7 @@ async function openWorkspaceMembersManager({ skipRouteSync = false, replaceRoute
             <h2>空间管理</h2>
             <p>在这里可以维护共享空间成员，也可以删除整个共享空间。</p>
           </div>
-          <button id="createWorkspaceMemberBtn" type="button">创建成员</button>
+          <button id="createWorkspaceMemberBtn" type="button">添加成员</button>
         </div>
       </section>
 
@@ -2829,7 +2829,7 @@ async function openWorkspaceMembersManager({ skipRouteSync = false, replaceRoute
     }
     openModal(
       `
-        <h2>创建成员</h2>
+        <h2>添加成员</h2>
         <label>
           <span>成员</span>
           <select name="actor_id">${actorOptions({ excludeIds: memberIds })}</select>
@@ -2851,7 +2851,7 @@ async function openWorkspaceMembersManager({ skipRouteSync = false, replaceRoute
         await refreshShellPreservingWorkspace();
         await refreshCurrentManager();
       },
-      { confirmLabel: "创建成员" },
+      { confirmLabel: "添加成员" },
     );
   });
 
@@ -2921,7 +2921,7 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
       <section class="manager-section">
         <div class="section-head">
           <div>
-            <h2>成员管理</h2>
+            <h2>用户管理</h2>
           </div>
           <button id="createActorBtn" type="button">创建成员</button>
         </div>
@@ -2931,7 +2931,7 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
         <div class="section-head">
           <div>
             <h2>现有成员</h2>
-            <p>支持更新显示名称、管理员状态、启用状态；用户可直接设置新密码，Agent token 支持隐藏和显示查看。</p>
+            <p>支持更新显示名称、管理员状态、启用状态和彻底删除；用户可直接设置新密码，Agent token 支持隐藏和显示查看。</p>
           </div>
         </div>
         ${payload.actors.length ? `
@@ -2996,6 +2996,7 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
                       <div class="manager-actions">
                         <button type="button" data-action="save-actor">保存</button>
                         <button type="button" data-action="toggle-actor" class="secondary">${actor.is_active ? "停用" : "启用"}</button>
+                        <button type="button" data-action="delete-actor" class="danger-button">删除</button>
                       </div>
                     </td>
                   </tr>
@@ -3135,6 +3136,31 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
       toast(shouldEnable ? "成员已启用" : "成员已停用");
       await refreshShellPreservingWorkspace({ reloadFiles: false });
       await refreshCurrentManager();
+    });
+  });
+
+  $("managerBody").querySelectorAll('[data-action="delete-actor"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = button.closest("tr");
+      const actorId = row.dataset.actorId;
+      openModal(
+        `<h2>删除成员</h2><p>确认彻底删除 ${escapeHtml(actorId)}？其登录凭证会失效，私有空间和其中的文件也会一起删除。</p>`,
+        async () => {
+          await api(`/api/actors/${encodeURIComponent(actorId)}`, {
+            method: "DELETE",
+          });
+          toast("成员已删除");
+          if (actorId === state.actor?.actor_id) {
+            state.actor = null;
+            window.history.replaceState(null, "", "/");
+            await bootstrap();
+            return;
+          }
+          await refreshShellPreservingWorkspace({ reloadFiles: false });
+          await refreshCurrentManager();
+        },
+        { confirmLabel: "删除", confirmVariant: "danger" },
+      );
     });
   });
   if (!skipRouteSync) {

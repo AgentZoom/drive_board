@@ -437,6 +437,64 @@ class Database:
             assert updated is not None
             return public_actor(updated)
 
+    def delete_actor(self, actor_id: str) -> list[int]:
+        with closing(self.connect()) as connection:
+            actor = self.get_actor(actor_id, connection=connection)
+            if not actor:
+                raise KeyError("actor not found")
+
+            if actor["is_admin"] and actor["is_active"]:
+                admin_count = connection.execute(
+                    "SELECT COUNT(*) FROM actors WHERE is_admin = 1 AND is_active = 1"
+                ).fetchone()[0]
+                if admin_count <= 1:
+                    raise ValueError("cannot delete the last active admin")
+
+            blocking_workspace = connection.execute(
+                """
+                SELECT w.name
+                FROM workspace_members m
+                JOIN workspaces w ON w.id = m.workspace_id
+                WHERE m.actor_id = ?
+                  AND m.permission = 'owner'
+                  AND w.kind = 'share_group'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM workspace_members other
+                      WHERE other.workspace_id = m.workspace_id
+                        AND other.permission = 'owner'
+                        AND other.actor_id != ?
+                  )
+                ORDER BY w.name
+                LIMIT 1
+                """,
+                (actor_id, actor_id),
+            ).fetchone()
+            if blocking_workspace is not None:
+                raise ValueError(
+                    f"cannot delete the last owner of shared workspace {blocking_workspace['name']}"
+                )
+
+            workspace_rows = connection.execute(
+                """
+                SELECT id FROM workspaces
+                WHERE owner_actor_id = ? AND kind = 'private'
+                ORDER BY id
+                """,
+                (actor_id,),
+            ).fetchall()
+            workspace_ids = [int(row["id"]) for row in workspace_rows]
+            if workspace_ids:
+                connection.executemany(
+                    "DELETE FROM workspaces WHERE id = ?",
+                    [(workspace_id,) for workspace_id in workspace_ids],
+                )
+
+            cursor = connection.execute("DELETE FROM actors WHERE actor_id = ?", (actor_id,))
+            if cursor.rowcount == 0:
+                raise KeyError("actor not found")
+            connection.commit()
+            return workspace_ids
+
     def create_workspace(
         self,
         *,

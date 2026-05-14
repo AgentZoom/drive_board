@@ -422,8 +422,17 @@ def test_share_member_and_actor_management_routes(tmp_path):
     assert update_actor.status_code == 200, update_actor.text
     assert update_actor.json()["actor"]["display_name"] == "Renamed User"
 
+    delete_last_admin = client.delete("/api/actors/user:admin")
+    assert delete_last_admin.status_code == 400, delete_last_admin.text
+
     newuser_client = make_client(tmp_path)
     login(newuser_client, "newuser", "updated-secret-456")
+
+    create_owned_workspace = newuser_client.post(
+        "/api/workspaces",
+        json={"name": "newuser-team", "kind": "share_group", "members": []},
+    )
+    assert create_owned_workspace.status_code == 200, create_owned_workspace.text
 
     create_agent = client.post(
         "/api/actors",
@@ -448,13 +457,41 @@ def test_share_member_and_actor_management_routes(tmp_path):
     assert token_viewer["display_name"] == "Token Viewer Updated"
     assert token_viewer["token"] == "viewer-token-456"
 
+    workspaces_before_delete = client.get("/api/workspaces")
+    assert workspaces_before_delete.status_code == 200, workspaces_before_delete.text
+    newuser_workspace = next(item for item in workspaces_before_delete.json()["workspaces"] if item["name"] == "newuser")
+    private_workspace_storage = tmp_path / "storage" / str(newuser_workspace["id"])
+    assert private_workspace_storage.is_dir()
+
+    blocked_delete = client.delete("/api/actors/user:newuser")
+    assert blocked_delete.status_code == 400, blocked_delete.text
+    assert "last owner of shared workspace newuser-team" in blocked_delete.text
+
+    add_admin_owner = newuser_client.post(
+        "/api/workspaces/newuser-team/members",
+        json={"actor_id": "user:admin", "permission": "owner"},
+    )
+    assert add_admin_owner.status_code == 200, add_admin_owner.text
+
     delete_actor = client.delete("/api/actors/user:newuser")
     assert delete_actor.status_code == 200, delete_actor.text
 
     actors = client.get("/api/actors", params={"include_inactive": "true"})
     assert actors.status_code == 200, actors.text
-    actor_row = next(item for item in actors.json()["actors"] if item["actor_id"] == "user:newuser")
-    assert actor_row["is_active"] is False
+    assert all(item["actor_id"] != "user:newuser" for item in actors.json()["actors"])
+
+    workspaces_after_delete = client.get("/api/workspaces")
+    assert workspaces_after_delete.status_code == 200, workspaces_after_delete.text
+    workspace_names = {item["name"] for item in workspaces_after_delete.json()["workspaces"]}
+    assert "newuser" not in workspace_names
+    assert "newuser-team" in workspace_names
+    assert not private_workspace_storage.exists()
+
+    deleted_login = newuser_client.post(
+        "/api/login",
+        json={"username": "newuser", "password": "updated-secret-456"},
+    )
+    assert deleted_login.status_code == 401, deleted_login.text
 
 
 def test_file_copy_move_rename_and_share_path_updates(tmp_path):

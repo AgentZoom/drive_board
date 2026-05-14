@@ -267,12 +267,14 @@ def create_api_router() -> APIRouter:
     ):
         require_admin(actor)
         db = _db(request)
-        if not db.get_actor(actor_id):
-            raise HTTPException(status_code=404, detail="actor not found")
         try:
-            db.update_actor(actor_id, is_active=False)
+            workspace_ids = db.delete_actor(actor_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        for workspace_id in workspace_ids:
+            shutil.rmtree(_config(request).storage_dir / str(workspace_id), ignore_errors=True)
         return {"ok": True}
 
     @router.get("/api/workspaces")
