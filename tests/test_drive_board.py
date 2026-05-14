@@ -231,6 +231,25 @@ def test_upload_requires_overwrite_and_supports_named_destination(tmp_path):
     assert named_text.json()["content"] == "named"
 
 
+def test_text_endpoint_strips_utf8_bom_from_uploaded_files(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    bom_text = "\ufeffBOM中文".encode("utf-8")
+
+    upload = client.post(
+        "/api/files/upload",
+        data={"workspace": "huangshiyu", "path": "fileenc/"},
+        files={"file": ("bom.txt", bom_text, "text/plain")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    text = client.get(
+        "/api/files/text", params={"workspace": "huangshiyu", "path": "fileenc/bom.txt"}
+    )
+    assert text.status_code == 200, text.text
+    assert text.json()["content"] == "BOM中文"
+
+
 def test_public_link_download_and_revoke(tmp_path):
     client = make_client(tmp_path)
     anonymous = make_client(tmp_path)

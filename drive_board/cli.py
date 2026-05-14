@@ -18,6 +18,32 @@ from .config import DEFAULT_PORT
 
 DEFAULT_SERVER = "http://drive.mm-lab.cn"
 
+
+def configure_standard_streams() -> None:
+    reconfigure_stream(sys.stdin, encoding="utf-8-sig")
+    reconfigure_stream(sys.stdout, encoding="utf-8")
+    reconfigure_stream(sys.stderr, encoding="utf-8")
+
+
+def reconfigure_stream(stream: Any, *, encoding: str) -> None:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if not callable(reconfigure):
+        return
+    try:
+        reconfigure(encoding=encoding)
+    except ValueError:
+        return
+
+
+def read_stdin_text() -> str:
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is not None:
+        return buffer.read().decode("utf-8-sig")
+    return sys.stdin.read().lstrip("\ufeff")
+
+
+configure_standard_streams()
+
 app = typer.Typer(no_args_is_help=True, help="Drive Board web drive CLI.")
 actors_app = typer.Typer(help="List users and agents.")
 workspaces_app = typer.Typer(help="Workspace commands.")
@@ -139,8 +165,8 @@ def read_text_input(
     if bool(file) == stdin:
         fail("provide exactly one of --file or --stdin")
     if file:
-        return file.read_text(encoding="utf-8")
-    return sys.stdin.read()
+        return file.read_text(encoding="utf-8-sig")
+    return read_stdin_text()
 
 
 def get_text_content(workspace: str, path: str, *, allow_missing: bool = False) -> str:
@@ -222,7 +248,7 @@ def render_table(rows: list[dict[str, Any]]) -> None:
     console.print(table)
 
 
-@app.command()
+@app.command(hidden=True)
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Bind port."),
@@ -299,6 +325,12 @@ def workspaces_add_member(
 def workspaces_remove_member(workspace: str, actor_id: str):
     """Remove a member from a workspace."""
     print_output(request("DELETE", f"/api/workspaces/{workspace}/members/{actor_id}"))
+
+
+@workspaces_app.command("delete")
+def workspaces_delete(workspace: str):
+    """Delete a share_group workspace."""
+    print_output(request("DELETE", f"/api/workspaces/{workspace}"))
 
 
 def _files_list_impl(workspace: str, path: str = "") -> None:

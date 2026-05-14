@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 
 import httpx
 from typer.testing import CliRunner
@@ -26,6 +27,37 @@ def test_cli_supports_version_flag():
 
     assert result.exit_code == 0
     assert result.stdout.strip() == f"drive-board {cli_module.__version__}"
+
+
+def test_configure_standard_streams_switches_to_utf8(monkeypatch):
+    stdin = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+
+    monkeypatch.setattr(cli_module.sys, "stdin", stdin)
+    monkeypatch.setattr(cli_module.sys, "stdout", stdout)
+    monkeypatch.setattr(cli_module.sys, "stderr", stderr)
+
+    cli_module.configure_standard_streams()
+
+    assert stdin.encoding.lower().startswith("utf-8")
+    assert stdout.encoding.lower() == "utf-8"
+    assert stderr.encoding.lower() == "utf-8"
+
+
+def test_read_text_input_strips_utf8_bom_from_file(tmp_path):
+    source = tmp_path / "bom.txt"
+    source.write_text("中文内容", encoding="utf-8-sig")
+
+    assert cli_module.read_text_input(file=source) == "中文内容"
+
+
+def test_read_text_input_decodes_utf8_stdin_bytes(monkeypatch):
+    stdin = io.TextIOWrapper(io.BytesIO("中文内容".encode("utf-8-sig")), encoding="gbk")
+
+    monkeypatch.setattr(cli_module.sys, "stdin", stdin)
+
+    assert cli_module.read_text_input(stdin=True) == "中文内容"
 
 
 class FakeTextClient:
@@ -184,6 +216,13 @@ def test_cli_json_output_is_machine_readable_for_long_preview_urls():
     assert payload["url"].endswith(f"/preview/main-agent/{long_path}")
 
 
+def test_cli_help_hides_internal_serve_command():
+    result = runner.invoke(cli_module.app, ["--help"])
+
+    assert result.exit_code == 0
+    assert re.search(r"^\s*serve\s", result.stdout, re.MULTILINE) is None
+
+
 def test_cli_jsonl_output_is_machine_readable(monkeypatch):
     def fake_request(method: str, url: str, **kwargs):
         return {
@@ -303,11 +342,13 @@ def test_workspace_share_and_public_link_remove_commands_use_expected_routes(mon
     monkeypatch.setattr(cli_module, "print_output", lambda data: None)
 
     cli_module.workspaces_remove_member("research-team", "agent:cli-agent")
+    cli_module.workspaces_delete("research-team")
     cli_module.shares_remove(7)
     cli_module.public_links_remove(11)
 
     assert request_calls == [
         ("DELETE", "/api/workspaces/research-team/members/agent:cli-agent", {}),
+        ("DELETE", "/api/workspaces/research-team", {}),
         ("DELETE", "/api/shares/7", {}),
         ("DELETE", "/api/public-links/11", {}),
     ]

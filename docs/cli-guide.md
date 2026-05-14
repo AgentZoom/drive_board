@@ -1,6 +1,6 @@
 # Drive Board CLI 使用指南
 
-`drive-board` 给 Agent 和自动化脚本调用已存在的 Drive Board 服务使用。本指南只覆盖远程调用型 CLI 命令，不覆盖网站或服务启动方式。
+`drive-board` 给 Agent 和自动化脚本调用已存在的 Drive Board 服务使用。本指南只覆盖远程调用型 CLI 命令，不覆盖网站或服务启动方式。`serve` 属于本地开发用的内部命令，默认不会出现在 `drive-board --help` 中，Agent 不要依赖它。
 
 CLI 统一通过 Bearer Token 鉴权，不使用网页端账号密码登录流程。
 
@@ -78,6 +78,12 @@ export DRIVE_BOARD_FORMAT="json"
 - 如果网络连接失败，CLI 会直接打印请求异常并退出。
 - `files write` 或 `files append` 参数不合法时会本地直接报错，不会发请求。
 - `files upload` 本地文件不存在时会本地直接报错，不会发请求。
+
+## Windows / PowerShell UTF-8
+
+- CLI 启动时会把标准输入、标准输出、标准错误统一切到 UTF-8，避免 Windows 默认代码页把中文路径或文本打坏。
+- `files write`、`files append` 的 `--file` 和 `--stdin` 都按 `utf-8-sig` 读取；如果输入前面带 UTF-8 BOM，会自动去掉。
+- `files cat` 也按 UTF-8 输出；远端文本如果带 UTF-8 BOM，CLI 会打印去掉 BOM 后的内容。
 
 ## 核心术语
 
@@ -373,6 +379,36 @@ drive-board [全局参数] workspaces remove-member <workspace> <actor_id>
 drive-board --token main-agent-token workspaces remove-member research-team agent:cli-agent
 ```
 
+### `workspaces delete`
+
+语法：
+
+```bash
+drive-board [全局参数] workspaces delete <workspace>
+```
+
+用途：
+
+- 删除一个 `share_group` workspace。
+
+参数：
+
+| 参数        | 是否必需 | 含义           |
+| ----------- | -------- | -------------- |
+| `workspace` | 是       | 目标工作区名。 |
+
+说明：
+
+- 只允许删除 `share_group` workspace；用户或 Agent 自己的 `private` workspace 不能删除。
+- 需要当前 token 是该共享工作区的 `owner`，或具备管理员权限。
+- 删除后会同时清理该 workspace 下的成员关系、分享关系、公开链接和文件内容。
+
+示例：
+
+```bash
+drive-board --token main-agent-token workspaces delete research-team
+```
+
 ### `files ls` / `files list`
 
 语法：
@@ -529,8 +565,9 @@ drive-board [全局参数] files cat <workspace> <path>
 
 说明：
 
-- 只适用于 UTF-8 文本文件。
+- 支持无 BOM 的 UTF-8，也支持带 UTF-8 BOM 的文本文件。
 - 不适合二进制文件、图片、音频、PDF。
+- 如果文件开头有 UTF-8 BOM，CLI 会自动去掉再输出。
 
 示例：
 
@@ -562,6 +599,7 @@ drive-board [全局参数] files write <workspace> <path> (--file <local_file> |
 说明：
 
 - `--file` 和 `--stdin` 必须严格二选一。
+- CLI 会把 `--file` 和 `--stdin` 输入统一按 `utf-8-sig` 处理，并去掉开头 UTF-8 BOM。
 - 适合文本写入，不适合二进制上传；二进制请用 `files upload`。
 
 示例：
@@ -596,6 +634,7 @@ drive-board [全局参数] files append <workspace> <path> (--file <local_file> 
 说明：
 
 - CLI 会先读取远端已有文本内容，再把新内容拼到末尾后整体写回。
+- `--file` 和 `--stdin` 输入统一按 `utf-8-sig` 处理；如果输入前面带 UTF-8 BOM，会自动去掉。
 - 适合逐段生成日志、报告、草稿等文本，避免每次都让 Agent 准备完整全文。
 - 仅适用于 UTF-8 文本文件；如果目标文件存在但不是 UTF-8 文本，命令会失败。
 
@@ -916,8 +955,8 @@ drive-board [全局参数] public-links create <workspace> <path>
 - 同一个文件最多只会保留一个公开链接；如果再次执行 `public-links create`，CLI 会返回已有链接，而不会生成第二条。
 - 如果目标文件是 `.html` 或 `.htm`，公开链接会直接按网页渲染，而不是强制下载 HTML 文件。
 - HTML 公开链接只适合单文件页面；公开访问时不会额外暴露相对路径依赖的 CSS、JS、图片等资源，所以样式和脚本必须内联在同一个 HTML 文件里。
-- CLI 会根据当前 `--server` 把服务端返回的相对下载路径补成 `public_link.download_url`，因此它是最终可访问的完整绝对链接，可以直接复制、打开或发给别人。
-- `public_link` 对象还会包含 `id`、`path`、`token`、`created_at` 等字段。
+- CLI 会把服务端的 `public_link` 包装层自动拆掉，所以 `--format json` 下返回的顶层对象本身就包含 `id`、`path`、`token`、`created_at`、`download_url` 等字段。
+- CLI 会根据当前 `--server` 把返回对象里的 `download_url` 补成最终可访问的完整绝对链接，可以直接复制、打开或发给别人。
 
 示例：
 
@@ -995,7 +1034,7 @@ drive-board --token main-agent-token public-links rm 3
 下面这些能力当前不要尝试用 `drive-board` CLI 直接做，因为命令面里没有实现对应子命令：
 
 - 创建、更新、删除 actor。
-- 删除 workspace。
+- 删除 `private` workspace。
 - 通过 CLI 直接编辑二进制文件内容。
 
 如果未来 CLI 命令面扩展，应以 `drive-board --help` 和对应子命令 `--help` 为准，不要假设 API 已有的能力就一定已经暴露到 CLI。

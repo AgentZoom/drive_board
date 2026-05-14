@@ -137,7 +137,7 @@ def write_text(storage_dir: Path, workspace_id: int, path: str, content: str) ->
 
 
 def read_text(storage_dir: Path, workspace_id: int, path: str) -> str:
-    return resolve_path(storage_dir, workspace_id, path).read_text(encoding="utf-8")
+    return resolve_path(storage_dir, workspace_id, path).read_text(encoding="utf-8-sig")
 
 
 def make_folder(storage_dir: Path, workspace_id: int, path: str) -> None:
