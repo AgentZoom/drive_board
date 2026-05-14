@@ -3,17 +3,28 @@ from __future__ import annotations
 import io
 
 import httpx
+from typer.testing import CliRunner
 
 from drive_board import cli as cli_module
+
+
+runner = CliRunner()
 
 
 def test_configure_uses_production_server_by_default(monkeypatch):
     monkeypatch.setattr(cli_module.state, "server", "http://example.invalid")
 
-    cli_module.configure(server=cli_module.DEFAULT_SERVER, token=None, output_format="table")
+    cli_module.configure(version=False, server=cli_module.DEFAULT_SERVER, token=None, output_format="table")
 
     assert cli_module.DEFAULT_SERVER == "http://drive.mm-lab.cn"
     assert cli_module.state.server == "http://drive.mm-lab.cn"
+
+
+def test_cli_supports_version_flag():
+    result = runner.invoke(cli_module.app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"drive-board {cli_module.__version__}"
 
 
 class FakeTextClient:

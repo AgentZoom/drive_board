@@ -12,6 +12,7 @@ import uvicorn
 from rich.console import Console
 from rich.table import Table
 
+from . import __version__
 from .config import DEFAULT_PORT
 
 
@@ -35,8 +36,22 @@ class CliState:
 state = CliState()
 
 
+def version_callback(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(f"drive-board {__version__}")
+    raise typer.Exit()
+
+
 @app.callback()
 def configure(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=version_callback,
+        is_eager=True,
+        help="Show the CLI version and exit.",
+    ),
     server: str = typer.Option(
         DEFAULT_SERVER,
         "--server",
