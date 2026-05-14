@@ -15,7 +15,7 @@ from rich.table import Table
 from .config import DEFAULT_PORT
 
 
-DEFAULT_SERVER = f"http://127.0.0.1:{DEFAULT_PORT}"
+DEFAULT_SERVER = "http://drive.mm-lab.cn"
 
 app = typer.Typer(no_args_is_help=True, help="Drive Board web drive CLI.")
 actors_app = typer.Typer(help="List users and agents.")
@@ -27,7 +27,7 @@ console = Console()
 
 
 class CliState:
-    server: str = DEFAULT_SERVER
+    server: str = DEFAULT_SERVER.rstrip("/")
     token: str | None = None
     output_format: str = "table"
 

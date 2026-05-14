@@ -7,6 +7,15 @@ import httpx
 from drive_board import cli as cli_module
 
 
+def test_configure_uses_production_server_by_default(monkeypatch):
+    monkeypatch.setattr(cli_module.state, "server", "http://example.invalid")
+
+    cli_module.configure(server=cli_module.DEFAULT_SERVER, token=None, output_format="table")
+
+    assert cli_module.DEFAULT_SERVER == "http://drive.mm-lab.cn"
+    assert cli_module.state.server == "http://drive.mm-lab.cn"
+
+
 class FakeTextClient:
     def __init__(self, response: httpx.Response, calls: list[tuple[str, str, dict]]):
         self.response = response
