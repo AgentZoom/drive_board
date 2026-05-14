@@ -380,6 +380,8 @@ drive-board --token main-agent-token workspaces remove-member research-team agen
 ```bash
 drive-board [全局参数] files ls <workspace> [path]
 drive-board [全局参数] files list <workspace> [path]
+drive-board [全局参数] files ls <workspace> --path <relative_path>
+drive-board [全局参数] files list <workspace> --path <relative_path>
 ```
 
 用途：
@@ -388,15 +390,16 @@ drive-board [全局参数] files list <workspace> [path]
 
 参数：
 
-| 参数        | 是否必需 | 含义                                 |
-| ----------- | -------- | ------------------------------------ |
-| `workspace` | 是       | 目标工作区名。                       |
-| `path`      | 否       | 目标目录相对路径。省略时表示根目录。 |
+| 参数              | 是否必需 | 含义                                                                 |
+| ----------------- | -------- | -------------------------------------------------------------------- |
+| `workspace`       | 是       | 目标工作区名。                                                       |
+| `path` / `--path` | 否       | 目标目录相对路径。省略时表示根目录；位置参数和 `--path` 二选一即可。 |
 
 说明：
 
 - `files ls` 是推荐写法，更接近 Linux 常见命名。
 - `files list` 是兼容别名，行为完全相同。
+- 路径既可以写成位置参数，也可以显式写成 `--path reports`；不要同时传两次。
 
 返回结构：
 
@@ -803,6 +806,8 @@ drive-board --token main-agent-token shares add main-agent reports --actor agent
 ```bash
 drive-board [全局参数] shares ls <workspace> [--path <relative_path>]
 drive-board [全局参数] shares list <workspace> [--path <relative_path>]
+drive-board [全局参数] shares ls <workspace> [path]
+drive-board [全局参数] shares list <workspace> [path]
 ```
 
 用途：
@@ -811,16 +816,17 @@ drive-board [全局参数] shares list <workspace> [--path <relative_path>]
 
 参数：
 
-| 参数        | 是否必需 | 含义                                                                  |
-| ----------- | -------- | --------------------------------------------------------------------- |
-| `workspace` | 是       | 目标工作区名。                                                        |
-| `--path`    | 否       | 只看某个特定路径上的分享记录。省略时列出该 workspace 内全部分享记录。 |
+| 参数              | 是否必需 | 含义                                                                                                  |
+| ----------------- | -------- | ----------------------------------------------------------------------------------------------------- |
+| `workspace`       | 是       | 目标工作区名。                                                                                        |
+| `path` / `--path` | 否       | 只看某个特定路径上的分享记录。省略时列出该 workspace 内全部分享记录；位置参数和 `--path` 二选一即可。 |
 
 说明：
 
 - `shares ls` 是推荐写法；`shares list` 是兼容别名。
 - 这个命令用于查看“我分享出去的记录”。
 - 如果只想查看某一路径是否已被分享，传 `--path` 能减少返回量。
+- 位置参数写法 `shares ls main-agent reports` 与 `shares ls main-agent --path reports` 等价。
 
 示例：
 
@@ -926,6 +932,8 @@ drive-board --token main-agent-token --format json public-links create main-agen
 ```bash
 drive-board [全局参数] public-links ls <workspace> [--path <relative_path>]
 drive-board [全局参数] public-links list <workspace> [--path <relative_path>]
+drive-board [全局参数] public-links ls <workspace> [path]
+drive-board [全局参数] public-links list <workspace> [path]
 ```
 
 用途：
@@ -934,16 +942,17 @@ drive-board [全局参数] public-links list <workspace> [--path <relative_path>
 
 参数：
 
-| 参数        | 是否必需 | 含义                                                                    |
-| ----------- | -------- | ----------------------------------------------------------------------- |
-| `workspace` | 是       | 目标工作区名。                                                          |
-| `--path`    | 否       | 只看某个具体路径上的公开链接；省略时列出当前 workspace 下全部公开链接。 |
+| 参数              | 是否必需 | 含义                                                                                                    |
+| ----------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `workspace`       | 是       | 目标工作区名。                                                                                          |
+| `path` / `--path` | 否       | 只看某个具体路径上的公开链接；省略时列出当前 workspace 下全部公开链接；位置参数和 `--path` 二选一即可。 |
 
 说明：
 
 - `public-links ls` 是推荐写法；`public-links list` 是兼容别名。
 - 不传 `--path` 时，返回 `target_kind=workspace` 和整个 workspace 范围内的 `public_links` 数组。
 - CLI 会根据当前 `--server` 把 `public_links[*].download_url` 补成最终可访问的完整绝对链接。
+- 位置参数写法 `public-links ls main-agent reports/a.pdf` 与 `public-links ls main-agent --path reports/a.pdf` 等价。
 
 示例：
 

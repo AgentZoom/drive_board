@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -87,7 +87,7 @@ def client() -> httpx.Client:
 
 
 def fail(message: str, code: int = 1) -> None:
-    console.print(f"[red]Error:[/red] {message}", stderr=True)
+    typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code)
 
 
@@ -175,14 +175,14 @@ def simplified(data: Any) -> Any:
 def print_output(data: Any) -> None:
     data = simplified(data)
     if state.output_format == "json":
-        console.print(json.dumps(data, ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
         return
     if state.output_format == "jsonl":
         if isinstance(data, list):
             for item in data:
-                console.print(json.dumps(item, ensure_ascii=False))
+                typer.echo(json.dumps(item, ensure_ascii=False))
         else:
-            console.print(json.dumps(data, ensure_ascii=False))
+            typer.echo(json.dumps(data, ensure_ascii=False))
         return
     if isinstance(data, list):
         render_table(data)
@@ -305,16 +305,30 @@ def _files_list_impl(workspace: str, path: str = "") -> None:
     print_output(request("GET", "/api/files", params={"workspace": workspace, "path": path}))
 
 
+def resolve_list_path(path: str | None, path_option: str | None) -> str | None:
+    if path is not None and path_option is not None:
+        fail("provide path either positionally or with --path, not both")
+    return path if path is not None else path_option
+
+
 @files_app.command("ls")
-def files_ls(workspace: str, path: str = ""):
+def files_ls(
+    workspace: str,
+    path: Annotated[str | None, typer.Argument()] = None,
+    path_option: Annotated[str | None, typer.Option("--path")] = None,
+):
     """List a folder."""
-    _files_list_impl(workspace, path)
+    _files_list_impl(workspace, resolve_list_path(path, path_option) or "")
 
 
 @files_app.command("list")
-def files_list(workspace: str, path: str = ""):
+def files_list(
+    workspace: str,
+    path: Annotated[str | None, typer.Argument()] = None,
+    path_option: Annotated[str | None, typer.Option("--path")] = None,
+):
     """Alias for ls."""
-    _files_list_impl(workspace, path)
+    _files_list_impl(workspace, resolve_list_path(path, path_option) or "")
 
 
 @files_app.command("mkdir")
@@ -365,7 +379,7 @@ def files_download(
             "/api/files/download", params={"workspace": workspace, "path": remote_path}
         )
     if response.status_code >= 400:
-        fail(f"{response.status_code}: {response.text}")
+        fail(f"{response.status_code}: {response_error_detail(response)}")
     destination = output or Path(remote_path).name
     Path(destination).write_bytes(response.content)
     print_output({"output": str(destination), "bytes": len(response.content)})
@@ -517,15 +531,23 @@ def _shares_list_impl(workspace: str, path: str | None = None) -> None:
 
 
 @shares_app.command("ls")
-def shares_ls(workspace: str, path: str | None = typer.Option(None, "--path")):
+def shares_ls(
+    workspace: str,
+    path: Annotated[str | None, typer.Argument()] = None,
+    path_option: Annotated[str | None, typer.Option("--path")] = None,
+):
     """List shares on a workspace path."""
-    _shares_list_impl(workspace, path)
+    _shares_list_impl(workspace, resolve_list_path(path, path_option))
 
 
 @shares_app.command("list")
-def shares_list(workspace: str, path: str | None = typer.Option(None, "--path")):
+def shares_list(
+    workspace: str,
+    path: Annotated[str | None, typer.Argument()] = None,
+    path_option: Annotated[str | None, typer.Option("--path")] = None,
+):
     """Alias for ls."""
-    _shares_list_impl(workspace, path)
+    _shares_list_impl(workspace, resolve_list_path(path, path_option))
 
 
 @shares_app.command("rm")
@@ -558,15 +580,23 @@ def public_links_create(workspace: str, path: str):
 
 
 @public_links_app.command("ls")
-def public_links_ls(workspace: str, path: str | None = typer.Option(None, "--path")):
+def public_links_ls(
+    workspace: str,
+    path: Annotated[str | None, typer.Argument()] = None,
+    path_option: Annotated[str | None, typer.Option("--path")] = None,
+):
     """List public links on a workspace or a specific path."""
-    _public_links_list_impl(workspace, path)
+    _public_links_list_impl(workspace, resolve_list_path(path, path_option))
 
 
 @public_links_app.command("list")
-def public_links_list(workspace: str, path: str | None = typer.Option(None, "--path")):
+def public_links_list(
+    workspace: str,
+    path: Annotated[str | None, typer.Argument()] = None,
+    path_option: Annotated[str | None, typer.Option("--path")] = None,
+):
     """Alias for ls."""
-    _public_links_list_impl(workspace, path)
+    _public_links_list_impl(workspace, resolve_list_path(path, path_option))
 
 
 @public_links_app.command("rm")

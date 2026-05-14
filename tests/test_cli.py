@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 
 import httpx
 from typer.testing import CliRunner
@@ -56,6 +57,22 @@ class FakeUploadClient:
 
     def post(self, url: str, **kwargs):
         self.calls.append(("POST", url, kwargs))
+        return self.response
+
+
+class FakeRequestClient:
+    def __init__(self, response: httpx.Response, calls: list[tuple[str, str, dict]]):
+        self.response = response
+        self.calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def request(self, method: str, url: str, **kwargs):
+        self.calls.append((method, url, kwargs))
         return self.response
 
 
@@ -130,6 +147,93 @@ def test_files_append_creates_missing_text_from_file(monkeypatch, tmp_path):
         )
     ]
     assert post_calls[0][2]["json"]["content"] == "First line\n"
+
+
+def test_cli_reports_http_errors_without_traceback(monkeypatch):
+    request_calls: list[tuple[str, str, dict]] = []
+
+    def fake_client():
+        return FakeRequestClient(
+            httpx.Response(
+                401,
+                headers={"content-type": "application/json"},
+                json={"detail": "Not authenticated"},
+            ),
+            request_calls,
+        )
+
+    monkeypatch.setattr(cli_module, "client", fake_client)
+
+    result = runner.invoke(cli_module.app, ["whoami"])
+
+    assert result.exit_code == 1
+    assert "Error: 401: Not authenticated" in result.output
+    assert "TypeError" not in result.output
+
+
+def test_cli_json_output_is_machine_readable_for_long_preview_urls():
+    long_path = "/".join(["nested"] * 30 + ["index.html"])
+
+    result = runner.invoke(
+        cli_module.app,
+        ["--format", "json", "files", "preview-url", "main-agent", long_path],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["url"].endswith(f"/preview/main-agent/{long_path}")
+
+
+def test_cli_jsonl_output_is_machine_readable(monkeypatch):
+    def fake_request(method: str, url: str, **kwargs):
+        return {
+            "workspaces": [
+                {"name": "workspace-a", "permission": "write", "description": "a" * 160},
+                {"name": "workspace-b", "permission": "read", "description": "b" * 160},
+            ]
+        }
+
+    monkeypatch.setattr(cli_module, "request", fake_request)
+
+    result = runner.invoke(cli_module.app, ["--format", "jsonl", "workspaces", "list"])
+
+    assert result.exit_code == 0
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(lines) == 2
+    assert [json.loads(line)["name"] for line in lines] == ["workspace-a", "workspace-b"]
+
+
+def test_list_commands_accept_positional_and_flag_paths(monkeypatch):
+    request_calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        request_calls.append((method, url, kwargs))
+        if url == "/api/files":
+            return {"items": []}
+        if url == "/api/shares":
+            return {"shares": []}
+        return {"public_links": []}
+
+    monkeypatch.setattr(cli_module, "request", fake_request)
+
+    files_result = runner.invoke(cli_module.app, ["files", "ls", "main-agent", "reports"])
+    shares_positional_result = runner.invoke(cli_module.app, ["shares", "ls", "main-agent", "reports"])
+    shares_option_result = runner.invoke(cli_module.app, ["shares", "ls", "main-agent", "--path", "archive"])
+    public_links_result = runner.invoke(
+        cli_module.app,
+        ["public-links", "ls", "main-agent", "reports/a.pdf"],
+    )
+
+    assert files_result.exit_code == 0
+    assert shares_positional_result.exit_code == 0
+    assert shares_option_result.exit_code == 0
+    assert public_links_result.exit_code == 0
+    assert request_calls == [
+        ("GET", "/api/files", {"params": {"workspace": "main-agent", "path": "reports"}}),
+        ("GET", "/api/shares", {"params": {"workspace": "main-agent", "path": "reports"}}),
+        ("GET", "/api/shares", {"params": {"workspace": "main-agent", "path": "archive"}}),
+        ("GET", "/api/public-links", {"params": {"workspace": "main-agent", "path": "reports/a.pdf"}}),
+    ]
 
 
 def test_files_upload_passes_raw_path_and_force_flag(monkeypatch, tmp_path):
