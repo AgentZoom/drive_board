@@ -27,12 +27,12 @@ drive-board serve --port 8362
 
 首次启动会创建 demo 身份：
 
-| 身份 | 登录或 Token |
-| --- | --- |
-| `user:admin` | 网页账号 `admin`，密码 `admin` |
-| `user:huangshiyu` | 网页账号 `huangshiyu`，密码 `huangshiyu` |
-| `agent:main-agent` | `main-agent-token` |
-| `agent:cli-agent` | `cli-agent-token` |
+| 身份               | 登录或 Token                             |
+| ------------------ | ---------------------------------------- |
+| `user:admin`       | 网页账号 `admin`，密码 `admin`           |
+| `user:huangshiyu`  | 网页账号 `huangshiyu`，密码 `huangshiyu` |
+| `agent:main-agent` | `main-agent-token`                       |
+| `agent:cli-agent`  | `cli-agent-token`                        |
 
 本地数据默认在 `./data`，可用 `DRIVE_BOARD_DATA_DIR` 或 `drive-board serve --data-dir` 指定。
 
