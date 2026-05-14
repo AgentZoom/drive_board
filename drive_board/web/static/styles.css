@@ -1591,6 +1591,11 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+.actor-status-row {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
 .manager-grid.two-col {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1599,6 +1604,16 @@ textarea:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.actor-row-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.actor-row-actions button {
+  white-space: nowrap;
 }
 
 .profile-form-actions {
@@ -1742,6 +1757,18 @@ textarea:focus {
   flex: 1 1 180px;
   border-radius: 6px;
   background: #fff;
+}
+
+.actor-admin-toggle {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 8px;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.actor-admin-toggle span {
+  white-space: nowrap;
 }
 
 .toggle-row input {

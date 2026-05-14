@@ -2956,8 +2956,8 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
                     </td>
                     <td><input name="display_name" value="${escapeHtml(actor.display_name)}" /></td>
                     <td>
-                      <div class="manager-inline-status">
-                        <label class="toggle-row">
+                      <div class="manager-inline-status actor-status-row">
+                        <label class="toggle-row actor-admin-toggle">
                           <span>管理员</span>
                           <input name="is_admin" type="checkbox"${actor.is_admin ? " checked" : ""} />
                         </label>
@@ -2993,7 +2993,7 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
                         `}
                     </td>
                     <td>
-                      <div class="manager-actions">
+                      <div class="manager-actions actor-row-actions">
                         <button type="button" data-action="save-actor">保存</button>
                         <button type="button" data-action="toggle-actor" class="secondary">${actor.is_active ? "停用" : "启用"}</button>
                         <button type="button" data-action="delete-actor" class="danger-button">删除</button>
