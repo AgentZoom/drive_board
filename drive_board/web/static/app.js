@@ -18,6 +18,7 @@ const state = {
   currentItem: null,
   editorPath: null,
   currentItems: [],
+  workspaceQuery: "",
   fileQuery: "",
   sortField: "modified_at",
   sortDirection: "desc",
@@ -1322,8 +1323,12 @@ async function loadShell({ skipContentLoad = false } = {}) {
 
 function renderWorkspaces() {
   const list = $("workspaceList");
+  const searchInput = $("workspaceSearchInput");
   const switcher = $("workspaceSwitcher");
   list.innerHTML = "";
+  if (searchInput && searchInput.value !== state.workspaceQuery) {
+    searchInput.value = state.workspaceQuery;
+  }
   const current = currentWorkspaceInfo() || state.workspaces[0] || null;
   $("spaceManagerNavBtn").classList.toggle("hidden", !current || current.kind !== "share_group");
   $("workspaceSwitchLabel").textContent = current?.name || "请选择";
@@ -1333,7 +1338,27 @@ function renderWorkspaces() {
     switcher.open = false;
     return;
   }
-  for (const workspace of state.workspaces) {
+  const query = state.workspaceQuery.trim().toLocaleLowerCase();
+  const visibleWorkspaces = state.workspaces.filter((workspace) => {
+    if (!query) return true;
+    const searchText = [
+      workspace.name,
+      workspace.kind === "private" ? "个人空间" : "共享空间",
+      workspace.permission,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+    return searchText.includes(query);
+  });
+  if (!visibleWorkspaces.length) {
+    const empty = document.createElement("div");
+    empty.className = "workspace-empty-state";
+    empty.textContent = "没有匹配的空间";
+    list.append(empty);
+    return;
+  }
+  for (const workspace of visibleWorkspaces) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "workspace-option";
@@ -3236,6 +3261,9 @@ async function openProfileManager({ skipRouteSync = false, replaceRoute = false 
 }
 
 function bindEvents() {
+  const workspaceSwitcher = $("workspaceSwitcher");
+  const workspaceSearchInput = $("workspaceSearchInput");
+
   $("previewModal").addEventListener("close", resetPreviewDialog);
   $("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -3273,6 +3301,23 @@ function bindEvents() {
     if (!event.target.closest(".action-menu")) {
       closeAllActionMenus();
     }
+    if (workspaceSwitcher.open && !event.target.closest(".workspace-switcher")) {
+      workspaceSwitcher.open = false;
+    }
+  });
+  workspaceSearchInput.addEventListener("input", (event) => {
+    state.workspaceQuery = event.currentTarget.value;
+    renderWorkspaces();
+  });
+  workspaceSwitcher.addEventListener("toggle", () => {
+    if (workspaceSwitcher.open) {
+      window.requestAnimationFrame(() => workspaceSearchInput.focus());
+      return;
+    }
+    if (!state.workspaceQuery) return;
+    state.workspaceQuery = "";
+    workspaceSearchInput.value = "";
+    renderWorkspaces();
   });
   $("fileSearchInput").addEventListener("input", (event) => {
     state.fileQuery = event.currentTarget.value;

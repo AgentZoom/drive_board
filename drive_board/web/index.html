@@ -48,7 +48,19 @@
                 <span class="workspace-switch-caret" aria-hidden="true"></span>
               </span>
             </summary>
-            <div id="workspaceList" class="workspace-menu"></div>
+            <div class="workspace-menu">
+              <div class="workspace-menu-search">
+                <input
+                  id="workspaceSearchInput"
+                  type="search"
+                  placeholder="搜索空间名称"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="搜索 workspace"
+                />
+              </div>
+              <div id="workspaceList" class="workspace-options"></div>
+            </div>
           </details>
         </section>
         <nav class="sidebar-nav" aria-label="主导航">

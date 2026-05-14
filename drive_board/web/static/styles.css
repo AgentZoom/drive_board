@@ -396,7 +396,7 @@ textarea:focus {
   left: 0;
   right: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
   max-height: 320px;
   overflow: auto;
   padding: 10px;
@@ -415,6 +415,40 @@ textarea:focus {
   opacity: 1;
   transform: translateY(0) scale(1);
   pointer-events: auto;
+}
+
+.workspace-menu-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 4px;
+  background: linear-gradient(180deg, rgba(24, 33, 30, 0.98) 0%, rgba(24, 33, 30, 0.94) 100%);
+}
+
+.workspace-menu-search input {
+  border-color: rgba(72, 102, 95, 0.96);
+  border-radius: 10px;
+  background: rgba(15, 22, 20, 0.96);
+  color: #f8fbf9;
+  padding: 9px 11px;
+}
+
+.workspace-menu-search input::placeholder {
+  color: #8ea29b;
+}
+
+.workspace-options {
+  display: grid;
+  gap: 6px;
+}
+
+.workspace-empty-state {
+  padding: 14px 12px;
+  border: 1px dashed rgba(76, 110, 102, 0.86);
+  border-radius: 12px;
+  color: #b8c8c2;
+  font-size: 13px;
+  text-align: center;
 }
 
 .workspace-option {
