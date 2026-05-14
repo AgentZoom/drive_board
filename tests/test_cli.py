@@ -60,6 +60,14 @@ def test_read_text_input_decodes_utf8_stdin_bytes(monkeypatch):
     assert cli_module.read_text_input(stdin=True) == "中文内容"
 
 
+def test_read_text_input_strips_bom_after_leading_newlines(monkeypatch):
+    stdin = io.TextIOWrapper(io.BytesIO(b"\r\n\xef\xbb\xbf\xe8\xbf\xbd\xe5\x8a\xa0\xe4\xb8\xad\xe6\x96\x87"), encoding="gbk")
+
+    monkeypatch.setattr(cli_module.sys, "stdin", stdin)
+
+    assert cli_module.read_text_input(stdin=True) == "\r\n追加中文"
+
+
 class FakeTextClient:
     def __init__(self, response: httpx.Response, calls: list[tuple[str, str, dict]]):
         self.response = response
@@ -145,6 +153,44 @@ def test_files_append_appends_stdin_to_existing_text(monkeypatch):
     assert post_calls[0][2]["json"]["content"] == "Hello world"
 
 
+def test_files_append_strips_bom_from_stdin(monkeypatch):
+    get_calls: list[tuple[str, str, dict]] = []
+    post_calls: list[tuple[str, str, dict]] = []
+
+    def fake_client():
+        return FakeTextClient(
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"content": "首段中文\r\n\r\n"},
+            ),
+            get_calls,
+        )
+
+    def fake_request(method: str, url: str, **kwargs):
+        post_calls.append((method, url, kwargs))
+        return kwargs["json"]
+
+    stdin = io.TextIOWrapper(io.BytesIO("追加中文\n".encode("utf-8-sig")), encoding="gbk")
+
+    monkeypatch.setattr(cli_module, "client", fake_client)
+    monkeypatch.setattr(cli_module, "request", fake_request)
+    monkeypatch.setattr(cli_module, "print_output", lambda data: None)
+    monkeypatch.setattr(cli_module.sys, "stdin", stdin)
+
+    cli_module.files_append("main-agent", "notes/readme.md", file=None, stdin=True)
+
+    assert get_calls == [
+        (
+            "GET",
+            "/api/files/text",
+            {"params": {"workspace": "main-agent", "path": "notes/readme.md"}},
+        )
+    ]
+    assert "\ufeff" not in post_calls[0][2]["json"]["content"]
+    assert post_calls[0][2]["json"]["content"].endswith("追加中文\n")
+
+
 def test_files_append_creates_missing_text_from_file(monkeypatch, tmp_path):
     get_calls: list[tuple[str, str, dict]] = []
     post_calls: list[tuple[str, str, dict]] = []
@@ -214,6 +260,19 @@ def test_cli_json_output_is_machine_readable_for_long_preview_urls():
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["url"].endswith(f"/preview/main-agent/{long_path}")
+
+
+def test_cli_preview_url_percent_encodes_workspace_and_path_segments():
+    result = runner.invoke(
+        cli_module.app,
+        ["--format", "json", "files", "preview-url", "agent tester", "中文 目录/终稿 中文.txt"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["url"].endswith(
+        "/preview/agent%20tester/%E4%B8%AD%E6%96%87%20%E7%9B%AE%E5%BD%95/%E7%BB%88%E7%A8%BF%20%E4%B8%AD%E6%96%87.txt"
+    )
 
 
 def test_cli_help_hides_internal_serve_command():

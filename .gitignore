@@ -225,3 +225,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .vscode/settings.json
+content1.bin
+content2.bin

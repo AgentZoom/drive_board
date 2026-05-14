@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 import httpx
 import typer
@@ -35,11 +36,25 @@ def reconfigure_stream(stream: Any, *, encoding: str) -> None:
         return
 
 
+def strip_leading_stdin_bom(text: str) -> str:
+    if not text:
+        return text
+    if text.startswith("\ufeff"):
+        return text.lstrip("\ufeff")
+    newline_prefix_len = len(text) - len(text.lstrip("\r\n"))
+    if newline_prefix_len == 0:
+        return text
+    suffix = text[newline_prefix_len:]
+    if suffix.startswith("\ufeff"):
+        return text[:newline_prefix_len] + suffix.lstrip("\ufeff")
+    return text
+
+
 def read_stdin_text() -> str:
     buffer = getattr(sys.stdin, "buffer", None)
     if buffer is not None:
-        return buffer.read().decode("utf-8-sig")
-    return sys.stdin.read().lstrip("\ufeff")
+        return strip_leading_stdin_bom(buffer.read().decode("utf-8"))
+    return strip_leading_stdin_bom(sys.stdin.read())
 
 
 configure_standard_streams()
@@ -529,8 +544,12 @@ def files_delete(workspace: str, path: str):
 @files_app.command("preview-url")
 def files_preview_url(workspace: str, path: str):
     """Print the browser preview URL for a file."""
-    safe_path = "/".join(part for part in path.replace("\\", "/").split("/") if part)
-    print_output({"url": f"{state.server}/preview/{workspace}/{safe_path}"})
+    safe_path = "/".join(quote(part, safe="") for part in path.replace("\\", "/").split("/") if part)
+    encoded_workspace = quote(workspace, safe="")
+    url = f"{state.server}/preview/{encoded_workspace}"
+    if safe_path:
+        url = f"{url}/{safe_path}"
+    print_output({"url": url})
 
 
 @shares_app.command("add")

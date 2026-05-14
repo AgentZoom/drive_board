@@ -84,6 +84,7 @@ export DRIVE_BOARD_FORMAT="json"
 - CLI 启动时会把标准输入、标准输出、标准错误统一切到 UTF-8，避免 Windows 默认代码页把中文路径或文本打坏。
 - `files write`、`files append` 的 `--file` 和 `--stdin` 都按 `utf-8-sig` 读取；如果输入前面带 UTF-8 BOM，会自动去掉。
 - `files cat` 也按 UTF-8 输出；远端文本如果带 UTF-8 BOM，CLI 会打印去掉 BOM 后的内容。
+- PowerShell pipeline 往往会把换行规范化成 `CRLF`，有时还会额外补结尾换行；如果你需要严格保留文本内容和换行形态，优先用 `--file`。
 
 ## 核心术语
 
@@ -600,6 +601,7 @@ drive-board [全局参数] files write <workspace> <path> (--file <local_file> |
 
 - `--file` 和 `--stdin` 必须严格二选一。
 - CLI 会把 `--file` 和 `--stdin` 输入统一按 `utf-8-sig` 处理，并去掉开头 UTF-8 BOM。
+- 如果内容和换行必须完全按原样保留，优先用 `--file`；PowerShell pipeline 可能会把换行转成 `CRLF`，并额外补末尾换行。
 - 适合文本写入，不适合二进制上传；二进制请用 `files upload`。
 
 示例：
@@ -635,6 +637,7 @@ drive-board [全局参数] files append <workspace> <path> (--file <local_file> 
 
 - CLI 会先读取远端已有文本内容，再把新内容拼到末尾后整体写回。
 - `--file` 和 `--stdin` 输入统一按 `utf-8-sig` 处理；如果输入前面带 UTF-8 BOM，会自动去掉。
+- 如果内容和换行必须完全按原样保留，优先用 `--file`；PowerShell pipeline 可能会把换行转成 `CRLF`，并额外补末尾换行。
 - 适合逐段生成日志、报告、草稿等文本，避免每次都让 Agent 准备完整全文。
 - 仅适用于 UTF-8 文本文件；如果目标文件存在但不是 UTF-8 文本，命令会失败。
 
@@ -791,13 +794,14 @@ drive-board [全局参数] files preview-url <workspace> <path>
 
 返回结构：
 
-| 字段  | 含义                                                     |
-| ----- | -------------------------------------------------------- |
-| `url` | 预览地址，格式为 `{server}/preview/{workspace}/{path}`。 |
+| 字段  | 含义                                                                                      |
+| ----- | ----------------------------------------------------------------------------------------- |
+| `url` | 预览地址，格式为 `{server}/preview/{workspace}/{path}`，其中各个路径段会做 URL encoding。 |
 
 说明：
 
 - 该命令会去掉 `path` 里的空段和反斜杠，统一按 URL 路径拼接。
+- `workspace` 和 `path` 的每个路径段都会单独做 URL encoding，因此空格会变成 `%20`，中文等非 ASCII 字符也会按浏览器 URL 规则编码。
 - 它不会验证文件存在性，也不会验证权限；真正访问 URL 时仍由服务端做权限检查。
 
 示例：
