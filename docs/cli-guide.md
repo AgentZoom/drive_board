@@ -895,7 +895,7 @@ drive-board [全局参数] public-links create <workspace> <path>
 
 用途：
 
-- 为一个文件创建公开下载链接。
+- 为一个文件创建公开访问链接。
 
 参数：
 
@@ -908,6 +908,8 @@ drive-board [全局参数] public-links create <workspace> <path>
 
 - 公开链接仅支持文件，不支持文件夹。
 - 同一个文件最多只会保留一个公开链接；如果再次执行 `public-links create`，CLI 会返回已有链接，而不会生成第二条。
+- 如果目标文件是 `.html` 或 `.htm`，公开链接会直接按网页渲染，而不是强制下载 HTML 文件。
+- HTML 公开链接只适合单文件页面；公开访问时不会额外暴露相对路径依赖的 CSS、JS、图片等资源，所以样式和脚本必须内联在同一个 HTML 文件里。
 - CLI 会根据当前 `--server` 把服务端返回的相对下载路径补成 `public_link.download_url`，因此它是最终可访问的完整绝对链接，可以直接复制、打开或发给别人。
 - `public_link` 对象还会包含 `id`、`path`、`token`、`created_at` 等字段。
 

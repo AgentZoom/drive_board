@@ -290,6 +290,35 @@ def test_public_link_download_and_revoke(tmp_path):
     assert revoked_download.status_code == 404, revoked_download.text
 
 
+def test_html_public_link_renders_in_browser_instead_of_downloading(tmp_path):
+    client = make_client(tmp_path)
+    anonymous = make_client(tmp_path)
+    login(client)
+
+    create_html = client.post(
+        "/api/files/text",
+        json={
+            "workspace": "huangshiyu",
+            "path": "public-page.html",
+            "content": "<!doctype html><html><head><style>body{font-family:sans-serif}</style></head><body><h1>Public HTML</h1><script>window.rendered = true;</script></body></html>",
+        },
+    )
+    assert create_html.status_code == 200, create_html.text
+
+    created = client.post(
+        "/api/public-links",
+        json={"workspace": "huangshiyu", "path": "public-page.html"},
+    )
+    assert created.status_code == 200, created.text
+    link = created.json()["public_link"]
+
+    public_response = anonymous.get(link["download_url"])
+    assert public_response.status_code == 200, public_response.text
+    assert public_response.headers["content-type"].startswith("text/html")
+    assert "attachment" not in public_response.headers.get("content-disposition", "").lower()
+    assert "<h1>Public HTML</h1>" in public_response.text
+
+
 def test_public_link_schema_deduplicates_existing_rows_on_startup(tmp_path):
     client = make_client(tmp_path)
     login(client)

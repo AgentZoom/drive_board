@@ -793,6 +793,13 @@ def create_api_router() -> APIRouter:
         target = resolve_path(_config(request).storage_dir, workspace["id"], link["path"])
         if not target.exists() or target.is_dir():
             raise HTTPException(status_code=404, detail="file not found")
+        suffix = Path(link["path"]).suffix.lower()
+        if suffix in {".html", ".htm"}:
+            return FileResponse(
+                target,
+                media_type=guess_media_type(link["path"]),
+                headers={"Cache-Control": "no-store"},
+            )
         return FileResponse(
             target,
             media_type=guess_media_type(link["path"]),
