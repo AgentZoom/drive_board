@@ -75,6 +75,15 @@ def fail(message: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def response_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+        detail = payload.get("detail", payload)
+    except ValueError:
+        detail = response.text
+    return str(detail)
+
+
 def request(method: str, url: str, **kwargs: Any) -> Any:
     with client() as http:
         try:
@@ -82,15 +91,43 @@ def request(method: str, url: str, **kwargs: Any) -> Any:
         except httpx.RequestError as exc:
             fail(str(exc))
     if response.status_code >= 400:
+        fail(f"{response.status_code}: {response_error_detail(response)}")
+    if response.headers.get("content-type", "").startswith("application/json"):
+        return response.json()
+    return response.text
+
+
+def read_text_input(
+    *,
+    file: Path | None = None,
+    stdin: bool = False,
+) -> str:
+    if bool(file) == stdin:
+        fail("provide exactly one of --file or --stdin")
+    if file:
+        return file.read_text(encoding="utf-8")
+    return sys.stdin.read()
+
+
+def get_text_content(workspace: str, path: str, *, allow_missing: bool = False) -> str:
+    with client() as http:
+        try:
+            response = http.get("/api/files/text", params={"workspace": workspace, "path": path})
+        except httpx.RequestError as exc:
+            fail(str(exc))
+    if allow_missing and response.status_code == 404:
+        return ""
+    if response.status_code >= 400:
         try:
             payload = response.json()
             detail = payload.get("detail", payload)
         except ValueError:
             detail = response.text
         fail(f"{response.status_code}: {detail}")
-    if response.headers.get("content-type", "").startswith("application/json"):
-        return response.json()
-    return response.text
+    payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
+    if isinstance(payload, dict):
+        return str(payload.get("content", ""))
+    return str(payload)
 
 
 def simplified(data: Any) -> Any:
@@ -240,19 +277,29 @@ def files_mkdir(workspace: str, path: str):
 def files_upload(
     workspace: str,
     local_path: Path,
-    path: str = typer.Option("", "--path", "-p", help="Destination folder path."),
+    path: str = typer.Option(
+        "",
+        "--path",
+        "-p",
+        help="Destination path. End with / to upload into a folder; otherwise treated as the remote file path.",
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite the remote file if it already exists."),
 ):
-    """Upload one local file into a workspace folder."""
+    """Upload one local file into a workspace path."""
     if not local_path.is_file():
         fail(f"local file not found: {local_path}")
     with client() as http, local_path.open("rb") as handle:
         response = http.post(
             "/api/files/upload",
-            data={"workspace": workspace, "path": path},
+            data={
+                "workspace": workspace,
+                "path": path,
+                "overwrite": "true" if force else "false",
+            },
             files={"file": (local_path.name, handle)},
         )
     if response.status_code >= 400:
-        fail(f"{response.status_code}: {response.text}")
+        fail(f"{response.status_code}: {response_error_detail(response)}")
     print_output(response.json())
 
 
@@ -290,14 +337,32 @@ def files_write(
     stdin: bool = typer.Option(False, "--stdin", help="Read content from stdin."),
 ):
     """Create or overwrite a UTF-8 text file."""
-    if bool(file) == stdin:
-        fail("provide exactly one of --file or --stdin")
-    if file:
-        content = file.read_text(encoding="utf-8")
-    else:
-        content = sys.stdin.read()
+    content = read_text_input(file=file, stdin=stdin)
     print_output(
         request("POST", "/api/files/text", json={"workspace": workspace, "path": path, "content": content})
+    )
+
+
+@files_app.command("append")
+def files_append(
+    workspace: str,
+    path: str,
+    file: Path | None = typer.Option(None, "--file", "-i", help="Read appended content from file."),
+    stdin: bool = typer.Option(False, "--stdin", help="Read appended content from stdin."),
+):
+    """Append UTF-8 text to an existing file, or create it if missing."""
+    existing_content = get_text_content(workspace, path, allow_missing=True)
+    appended_content = read_text_input(file=file, stdin=stdin)
+    print_output(
+        request(
+            "POST",
+            "/api/files/text",
+            json={
+                "workspace": workspace,
+                "path": path,
+                "content": f"{existing_content}{appended_content}",
+            },
+        )
     )
 
 

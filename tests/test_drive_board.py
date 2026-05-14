@@ -182,6 +182,53 @@ def test_pdf_preview_route_returns_pdf_media_type(tmp_path):
     assert preview.headers["content-type"].startswith("application/pdf")
 
 
+def test_upload_requires_overwrite_and_supports_named_destination(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    first_upload = client.post(
+        "/api/files/upload",
+        data={"workspace": "huangshiyu", "path": "reports/"},
+        files={"file": ("sample.txt", b"first", "text/plain")},
+    )
+    assert first_upload.status_code == 200, first_upload.text
+    assert first_upload.json()["path"] == "reports/sample.txt"
+
+    conflicting_upload = client.post(
+        "/api/files/upload",
+        data={"workspace": "huangshiyu", "path": "reports/"},
+        files={"file": ("sample.txt", b"second", "text/plain")},
+    )
+    assert conflicting_upload.status_code == 409, conflicting_upload.text
+
+    overwrite_upload = client.post(
+        "/api/files/upload",
+        data={"workspace": "huangshiyu", "path": "reports/", "overwrite": "true"},
+        files={"file": ("sample.txt", b"second", "text/plain")},
+    )
+    assert overwrite_upload.status_code == 200, overwrite_upload.text
+
+    overwritten_text = client.get(
+        "/api/files/text", params={"workspace": "huangshiyu", "path": "reports/sample.txt"}
+    )
+    assert overwritten_text.status_code == 200, overwritten_text.text
+    assert overwritten_text.json()["content"] == "second"
+
+    named_upload = client.post(
+        "/api/files/upload",
+        data={"workspace": "huangshiyu", "path": "reports/final-name.md"},
+        files={"file": ("ignored-name.txt", b"named", "text/plain")},
+    )
+    assert named_upload.status_code == 200, named_upload.text
+    assert named_upload.json()["path"] == "reports/final-name.md"
+
+    named_text = client.get(
+        "/api/files/text", params={"workspace": "huangshiyu", "path": "reports/final-name.md"}
+    )
+    assert named_text.status_code == 200, named_text.text
+    assert named_text.json()["content"] == "named"
+
+
 def test_public_link_download_and_revoke(tmp_path):
     client = make_client(tmp_path)
     anonymous = make_client(tmp_path)
@@ -292,6 +339,13 @@ def test_share_member_and_actor_management_routes(tmp_path):
     assert all(item["name"] != "team-alpha" for item in listed_workspaces.json()["workspaces"])
 
     login(client, "admin", "admin")
+    seeded_actors = client.get("/api/actors", params={"include_inactive": "true"})
+    assert seeded_actors.status_code == 200, seeded_actors.text
+    main_agent = next(item for item in seeded_actors.json()["actors"] if item["actor_id"] == "agent:main-agent")
+    admin_user = next(item for item in seeded_actors.json()["actors"] if item["actor_id"] == "user:admin")
+    assert main_agent["token"] == "main-agent-token"
+    assert admin_user["token"] is None
+
     create_actor = client.post(
         "/api/actors",
         json={
@@ -305,10 +359,36 @@ def test_share_member_and_actor_management_routes(tmp_path):
 
     update_actor = client.patch(
         "/api/actors/user:newuser",
-        json={"display_name": "Renamed User", "is_active": True},
+        json={"display_name": "Renamed User", "password": "updated-secret-456", "is_active": True},
     )
     assert update_actor.status_code == 200, update_actor.text
     assert update_actor.json()["actor"]["display_name"] == "Renamed User"
+
+    newuser_client = make_client(tmp_path)
+    login(newuser_client, "newuser", "updated-secret-456")
+
+    create_agent = client.post(
+        "/api/actors",
+        json={
+            "kind": "agent",
+            "actor_id": "agent:token-viewer",
+            "display_name": "Token Viewer",
+            "token": "viewer-token-123",
+        },
+    )
+    assert create_agent.status_code == 200, create_agent.text
+
+    update_agent = client.patch(
+        "/api/actors/agent:token-viewer",
+        json={"token": "viewer-token-456", "display_name": "Token Viewer Updated"},
+    )
+    assert update_agent.status_code == 200, update_agent.text
+
+    actors_with_tokens = client.get("/api/actors", params={"include_inactive": "true"})
+    assert actors_with_tokens.status_code == 200, actors_with_tokens.text
+    token_viewer = next(item for item in actors_with_tokens.json()["actors"] if item["actor_id"] == "agent:token-viewer")
+    assert token_viewer["display_name"] == "Token Viewer Updated"
+    assert token_viewer["token"] == "viewer-token-456"
 
     delete_actor = client.delete("/api/actors/user:newuser")
     assert delete_actor.status_code == 200, delete_actor.text

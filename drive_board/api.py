@@ -63,6 +63,15 @@ def _config(request: Request):
     return request.app.state.config
 
 
+def resolve_upload_destination_path(requested_path: str, filename: str) -> str:
+    raw = (requested_path or "").replace("\\", "/").strip()
+    treat_as_folder = raw in {"", ".", "/"} or raw.endswith("/")
+    normalized = normalize_path(requested_path)
+    if treat_as_folder:
+        return f"{normalized}/{filename}" if normalized else filename
+    return normalized
+
+
 async def current_actor(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -195,7 +204,13 @@ def create_api_router() -> APIRouter:
             raise HTTPException(status_code=400, detail="invalid actor type")
         if include_inactive:
             require_admin(actor)
-        return {"actors": _db(request).list_actors(actor_type=actor_type, include_inactive=include_inactive)}
+        return {
+            "actors": _db(request).list_actors(
+                actor_type=actor_type,
+                include_inactive=include_inactive,
+                include_agent_tokens=include_inactive,
+            )
+        }
 
     @router.post("/api/actors")
     async def create_actor(
@@ -444,18 +459,24 @@ def create_api_router() -> APIRouter:
         request: Request,
         workspace: str = Form(...),
         path: str = Form(""),
+        overwrite: bool = Form(False),
         file: UploadFile = File(...),
         actor: dict = Depends(current_actor),
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
-        folder = normalize_path(path)
-        require_permission(db, actor, ws, folder, "write")
         filename = normalize_path(file.filename)
         if not filename or "/" in filename:
             raise HTTPException(status_code=400, detail="invalid filename")
-        destination_path = f"{folder}/{filename}" if folder else filename
+        destination_path = resolve_upload_destination_path(path, filename)
         destination = resolve_path(_config(request).storage_dir, ws["id"], destination_path)
+        check_path = destination_path if destination.exists() else parent_path(destination_path)
+        require_permission(db, actor, ws, check_path, "write")
+        if destination.exists():
+            if destination.is_dir():
+                raise HTTPException(status_code=409, detail="destination path points to an existing folder")
+            if not overwrite:
+                raise HTTPException(status_code=409, detail="destination path already exists")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("wb") as handle:
             shutil.copyfileobj(file.file, handle)

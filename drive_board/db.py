@@ -13,6 +13,10 @@ from .storage import normalize_path, path_is_within
 
 
 WORKSPACE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,62}$")
+DEMO_AGENT_TOKENS = {
+    "agent:main-agent": "main-agent-token",
+    "agent:cli-agent": "cli-agent-token",
+}
 
 
 def utcnow() -> str:
@@ -33,6 +37,12 @@ def public_actor(row: dict[str, Any]) -> dict[str, Any]:
         "is_active": bool(row["is_active"]),
         "created_at": row["created_at"],
     }
+
+
+def admin_actor(row: dict[str, Any]) -> dict[str, Any]:
+    actor = public_actor(row)
+    actor["token"] = row.get("agent_token") if row.get("kind") == "agent" else None
+    return actor
 
 
 def normalize_workspace_name(name: str) -> str:
@@ -74,6 +84,7 @@ class Database:
                     display_name TEXT NOT NULL,
                     password_hash TEXT,
                     token_hash TEXT UNIQUE,
+                    agent_token TEXT,
                     is_admin INTEGER NOT NULL DEFAULT 0,
                     is_active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL
@@ -130,10 +141,28 @@ class Database:
                     ON public_links(workspace_id, path);
                 """
             )
+            self._ensure_actor_schema(connection)
             count = connection.execute("SELECT COUNT(*) FROM actors").fetchone()[0]
             if count == 0:
                 self._seed(connection)
             connection.commit()
+
+    def _ensure_actor_schema(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(actors)").fetchall()
+        }
+        if "agent_token" not in columns:
+            connection.execute("ALTER TABLE actors ADD COLUMN agent_token TEXT")
+        for actor_id, token in DEMO_AGENT_TOKENS.items():
+            connection.execute(
+                """
+                UPDATE actors
+                SET agent_token = ?
+                WHERE actor_id = ? AND kind = 'agent' AND agent_token IS NULL AND token_hash = ?
+                """,
+                (token, actor_id, hash_token(token)),
+            )
 
     def _seed(self, connection: sqlite3.Connection) -> None:
         self.create_actor(
@@ -196,6 +225,7 @@ class Database:
             raise ValueError("actor_id must include a type prefix")
         password_hash = hash_password(password) if password else None
         token_hash = hash_token(token) if token else None
+        agent_token = token if kind == "agent" else None
         owns_connection = connection is None
         connection = connection or self.connect()
         try:
@@ -203,9 +233,9 @@ class Database:
                 """
                 INSERT INTO actors (
                     actor_id, kind, username, display_name, password_hash,
-                    token_hash, is_admin, is_active, created_at
+                    token_hash, agent_token, is_admin, is_active, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """,
                 (
                     actor_id,
@@ -214,6 +244,7 @@ class Database:
                     display_name.strip() or actor_id,
                     password_hash,
                     token_hash,
+                    agent_token,
                     1 if is_admin else 0,
                     utcnow(),
                 ),
@@ -304,7 +335,11 @@ class Database:
             return row_to_dict(row)
 
     def list_actors(
-        self, *, actor_type: str = "all", include_inactive: bool = False
+        self,
+        *,
+        actor_type: str = "all",
+        include_inactive: bool = False,
+        include_agent_tokens: bool = False,
     ) -> list[dict[str, Any]]:
         query = "SELECT * FROM actors WHERE 1 = 1"
         params: list[Any] = []
@@ -316,7 +351,8 @@ class Database:
         query += " ORDER BY kind DESC, actor_id"
         with closing(self.connect()) as connection:
             rows = connection.execute(query, params).fetchall()
-            return [public_actor(dict(row)) for row in rows]
+            serializer = admin_actor if include_agent_tokens else public_actor
+            return [serializer(dict(row)) for row in rows]
 
     def update_actor(
         self,
@@ -357,6 +393,8 @@ class Database:
                     raise ValueError("only agents can update tokens")
                 updates.append("token_hash = ?")
                 params.append(hash_token(token))
+                updates.append("agent_token = ?")
+                params.append(token)
             if is_admin is not None:
                 updates.append("is_admin = ?")
                 params.append(1 if is_admin else 0)

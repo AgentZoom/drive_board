@@ -81,6 +81,8 @@ const ICONS = {
   modify: '<circle cx="12" cy="12" r="9" /><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none" />',
   delete: '<path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m19 6-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" />',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2" /><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />',
+  eye: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="3" />',
+  "eye-off": '<path d="M3 3 21 21" /><path d="M10.7 5.1A11.8 11.8 0 0 1 12 5c6.4 0 10 7 10 7a18.7 18.7 0 0 1-4.1 4.9" /><path d="M6.6 6.6A18.2 18.2 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6" /><path d="M9.9 9.9A3 3 0 0 0 14.1 14.1" />',
   play: '<path d="M8 6v12l10-6Z" fill="currentColor" stroke="none" />',
   pause: '<rect x="7" y="6" width="4" height="12" rx="1.2" fill="currentColor" stroke="none" /><rect x="13" y="6" width="4" height="12" rx="1.2" fill="currentColor" stroke="none" />',
 };
@@ -110,6 +112,13 @@ function renderSvgIcon(name) {
       ${paths}
     </svg>
   `;
+}
+
+function syncTokenVisibilityToggle(button, input) {
+  const visible = input.type === "text";
+  button.innerHTML = renderSvgIcon(visible ? "eye-off" : "eye");
+  button.setAttribute("aria-label", visible ? "隐藏 token" : "显示 token");
+  button.title = visible ? "隐藏 token" : "显示 token";
 }
 
 async function api(path, options = {}) {
@@ -415,6 +424,50 @@ async function readErrorDetail(response) {
     detail = text || detail;
   }
   return detail;
+}
+
+function currentUploadDestinationPath() {
+  return state.currentPath ? `${state.currentPath}/` : "";
+}
+
+async function requestFileUpload(file, { overwrite = false } = {}) {
+  const form = new FormData();
+  form.append("workspace", state.currentWorkspace);
+  form.append("path", currentUploadDestinationPath());
+  form.append("overwrite", overwrite ? "true" : "false");
+  form.append("file", file);
+
+  const response = await fetch("/api/files/upload", { method: "POST", body: form });
+  if (!response.ok) {
+    const error = new Error(await readErrorDetail(response));
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+function confirmOverwriteUpload(file) {
+  return new Promise((resolve) => {
+    openModal(
+      `
+        <h2>覆盖已有文件？</h2>
+        <p class="modal-copy">${escapeHtml(file.name)} 已存在于当前文件夹。确认后会用新文件覆盖旧文件。</p>
+      `,
+      async () => {
+        resolve(true);
+      },
+      {
+        confirmLabel: "覆盖上传",
+        cancelLabel: "取消",
+        onReady: ({ modal }) => {
+          $("modalCancel").onclick = () => {
+            modal.close();
+            resolve(false);
+          };
+        },
+      },
+    );
+  });
 }
 
 async function fetchBlobOrThrow(path) {
@@ -837,7 +890,28 @@ function openHtmlPreview(workspace, path) {
 function closeAllActionMenus() {
   document.querySelectorAll(".action-menu.is-open").forEach((menu) => {
     menu.classList.remove("is-open");
+    menu.querySelector(".action-submenu")?.classList.remove("open-upward");
   });
+}
+
+function positionActionMenu(menu) {
+  if (!menu) return;
+  const submenu = menu.querySelector(".action-submenu");
+  if (!submenu) return;
+
+  submenu.classList.remove("open-upward");
+
+  const menuRect = menu.getBoundingClientRect();
+  const submenuRect = submenu.getBoundingClientRect();
+  const tableWrapRect = menu.closest(".file-table-wrap")?.getBoundingClientRect();
+  const paginationRect = $("filePagination")?.getBoundingClientRect();
+  const lowerBoundary = paginationRect?.top ?? tableWrapRect?.bottom ?? window.innerHeight;
+  const upperBoundary = tableWrapRect?.top ?? 0;
+  const availableBelow = lowerBoundary - menuRect.bottom - 8;
+  const availableAbove = menuRect.top - upperBoundary - 8;
+  const shouldOpenUpward = submenuRect.height > availableBelow && availableAbove > availableBelow;
+
+  submenu.classList.toggle("open-upward", shouldOpenUpward);
 }
 
 function toggleActionMenu(menu) {
@@ -845,6 +919,9 @@ function toggleActionMenu(menu) {
   const shouldOpen = !menu.classList.contains("is-open");
   closeAllActionMenus();
   menu.classList.toggle("is-open", shouldOpen);
+  if (shouldOpen) {
+    positionActionMenu(menu);
+  }
 }
 
 function runPreviewCleanup() {
@@ -2581,18 +2658,32 @@ function openNewTextModal() {
 }
 
 async function uploadSelectedFile(file, { reload = true, notify = true, preserveDetail = false } = {}) {
-  const form = new FormData();
-  form.append("workspace", state.currentWorkspace);
-  form.append("path", state.currentPath || "");
-  form.append("file", file);
-  const uploaded = await api("/api/files/upload", { method: "POST", body: form });
+  let uploaded;
+  let overwritten = false;
+  try {
+    uploaded = await requestFileUpload(file);
+  } catch (error) {
+    if (error.status === 409 && error.message === "destination path already exists") {
+      const confirmed = await confirmOverwriteUpload(file);
+      if (!confirmed) {
+        if (notify) {
+          toast(`已取消覆盖 ${file.name}`);
+        }
+        return { skipped: true, overwritten: false, uploaded: null };
+      }
+      uploaded = await requestFileUpload(file, { overwrite: true });
+      overwritten = true;
+    } else {
+      throw error;
+    }
+  }
   if (notify) {
-    toast(`已上传 ${file.name}`);
+    toast(`${overwritten ? "已覆盖" : "已上传"} ${file.name}`);
   }
   if (reload) {
     await loadFiles({ preserveDetail });
   }
-  return uploaded;
+  return { skipped: false, overwritten, uploaded };
 }
 
 async function uploadFiles(fileList) {
@@ -2601,12 +2692,38 @@ async function uploadFiles(fileList) {
   if (!files.length) return;
   state.isUploading = true;
   syncUploadDock();
+  let uploadedCount = 0;
+  let overwrittenCount = 0;
+  let skippedCount = 0;
   try {
     for (const file of files) {
-      await uploadSelectedFile(file, { reload: false, notify: false });
+      const result = await uploadSelectedFile(file, { reload: false, notify: false });
+      if (!result || result.skipped) {
+        skippedCount += 1;
+        continue;
+      }
+      if (result.overwritten) {
+        overwrittenCount += 1;
+      } else {
+        uploadedCount += 1;
+      }
     }
-    await loadFiles({ preserveDetail: !$("detailPane").classList.contains("hidden") });
-    toast(files.length === 1 ? `已上传 ${files[0].name}` : `已上传 ${files.length} 个文件`);
+    if (uploadedCount || overwrittenCount) {
+      await loadFiles({ preserveDetail: !$("detailPane").classList.contains("hidden") });
+    }
+    const summary = [];
+    if (uploadedCount) {
+      summary.push(uploadedCount === 1 && files.length === 1 ? `已上传 ${files[0].name}` : `新上传 ${uploadedCount} 个文件`);
+    }
+    if (overwrittenCount) {
+      summary.push(overwrittenCount === 1 && files.length === 1 ? `已覆盖 ${files[0].name}` : `覆盖 ${overwrittenCount} 个文件`);
+    }
+    if (skippedCount) {
+      summary.push(skippedCount === 1 && files.length === 1 ? `已取消覆盖 ${files[0].name}` : `跳过 ${skippedCount} 个文件`);
+    }
+    if (summary.length) {
+      toast(summary.join("，"));
+    }
   } catch (error) {
     toast(error.message);
   } finally {
@@ -2805,7 +2922,6 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
         <div class="section-head">
           <div>
             <h2>成员管理</h2>
-            <p>点击“创建成员”按钮再填写账号信息。启用状态通过按钮切换，不再使用勾选框。</p>
           </div>
           <button id="createActorBtn" type="button">创建成员</button>
         </div>
@@ -2815,7 +2931,7 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
         <div class="section-head">
           <div>
             <h2>现有成员</h2>
-            <p>支持更新显示名称、管理员状态、启用状态，以及密码或 token。</p>
+            <p>支持更新显示名称、管理员状态、启用状态；用户可直接设置新密码，Agent token 支持隐藏和显示查看。</p>
           </div>
         </div>
         ${payload.actors.length ? `
@@ -2825,7 +2941,7 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
                 <th>成员</th>
                 <th>显示名称</th>
                 <th>权限状态</th>
-                <th>凭证更新</th>
+                <th>凭证</th>
                 <th></th>
               </tr>
             </thead>
@@ -2836,12 +2952,11 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
                     <td>
                       <div class="row-meta">
                         <strong>${escapeHtml(actor.actor_id)}</strong>
-                        <span>${escapeHtml(actor.display_name)} · ${escapeHtml(actor.kind)}${actor.username ? ` · ${escapeHtml(actor.username)}` : ""}</span>
                       </div>
                     </td>
                     <td><input name="display_name" value="${escapeHtml(actor.display_name)}" /></td>
                     <td>
-                      <div class="manager-grid">
+                      <div class="manager-inline-status">
                         <label class="toggle-row">
                           <span>管理员</span>
                           <input name="is_admin" type="checkbox"${actor.is_admin ? " checked" : ""} />
@@ -2851,8 +2966,31 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
                     </td>
                     <td>
                       ${actor.kind === "user"
-                        ? `<input name="password" type="password" placeholder="留空则不改密码" />`
-                        : `<input name="token" placeholder="留空则不改 token" />`}
+                        ? `
+                          <input
+                            name="password"
+                            type="password"
+                            placeholder="输入新密码以更新"
+                            autocomplete="new-password"
+                          />
+                        `
+                        : `
+                          <div class="token-visibility-field">
+                            <input
+                              class="token-visibility-input"
+                              name="token"
+                              type="password"
+                              value="${escapeHtml(actor.token || "")}"
+                              data-original-token="${escapeHtml(actor.token || "")}"
+                              placeholder="${escapeHtml(actor.token ? "" : "当前 token 不可恢复，可直接填入新 token")}"
+                              spellcheck="false"
+                              autocomplete="off"
+                            />
+                            <button type="button" data-action="toggle-token-visibility" class="token-visibility-toggle secondary" aria-label="显示 token" title="显示 token">
+                              ${renderSvgIcon("eye")}
+                            </button>
+                          </div>
+                        `}
                     </td>
                     <td>
                       <div class="manager-actions">
@@ -2945,6 +3083,16 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
     );
   });
 
+  $("managerBody").querySelectorAll('[data-action="toggle-token-visibility"]').forEach((button) => {
+    const input = button.closest(".token-visibility-field")?.querySelector('[name="token"]');
+    if (!input) return;
+    syncTokenVisibilityToggle(button, input);
+    button.addEventListener("click", () => {
+      input.type = input.type === "password" ? "text" : "password";
+      syncTokenVisibilityToggle(button, input);
+    });
+  });
+
   $("managerBody").querySelectorAll('[data-action="save-actor"]').forEach((button) => {
     button.addEventListener("click", async () => {
       const row = button.closest("tr");
@@ -2952,13 +3100,18 @@ async function openActorManager({ skipRouteSync = false, replaceRoute = false } 
         display_name: row.querySelector('[name="display_name"]').value.trim(),
         is_admin: row.querySelector('[name="is_admin"]').checked,
       };
-      const secretField = row.dataset.kind === "user" ? row.querySelector('[name="password"]') : row.querySelector('[name="token"]');
-      const secretValue = secretField.value.trim();
-      if (secretValue) {
-        if (row.dataset.kind === "user") {
-          body.password = secretValue;
-        } else {
-          body.token = secretValue;
+      if (row.dataset.kind === "user") {
+        const passwordField = row.querySelector('[name="password"]');
+        const nextPassword = passwordField.value.trim();
+        if (nextPassword) {
+          body.password = nextPassword;
+        }
+      } else {
+        const tokenField = row.querySelector('[name="token"]');
+        const nextToken = tokenField.value.trim();
+        const originalToken = tokenField.dataset.originalToken || "";
+        if (nextToken && nextToken !== originalToken) {
+          body.token = nextToken;
         }
       }
       await api(`/api/actors/${encodeURIComponent(row.dataset.actorId)}`, {
