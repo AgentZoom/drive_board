@@ -13,8 +13,9 @@ CLI 统一通过 Bearer Token 鉴权，不使用网页端账号密码登录流�
 5. `workspaces add-member` 的 `--permission` 允许值是 `read`、`write`、`owner`。
 6. `shares add` 的 `--permission` 允许值是 `read`、`write`。
 7. `files write` 和 `files append` 都必须二选一传入 `--file` 或 `--stdin`，不能两个都传，也不能两个都不传。
-8. `files upload --path` 表示目标目录，不是目标文件完整路径；远端文件名始终使用本地文件名。
-9. `files preview-url` 只是本地拼接 URL，不会向服务端发请求，也不会预先验证文件是否存在或当前 token 是否有权限。
+8. 文件操作优先使用 Linux 风格命名：`files ls`、`files rm`、`files cp`、`files mv`；旧的 `files list`、`files delete` 仍然可用，但更推荐前者。
+9. `files upload --path` 为空时上传到根目录；以 `/` 结尾时表示目标目录；不以 `/` 结尾时表示最终远端文件路径。
+10. `files preview-url` 只是本地拼接 URL，不会向服务端发请求，也不会预先验证文件是否存在或当前 token 是否有权限。
 
 ## 命令结构
 
@@ -26,7 +27,7 @@ drive-board [全局参数] <命令组或命令> [子命令] [位置参数] [命�
 
 ```bash
 drive-board --server http://127.0.0.1:8362 --token main-agent-token --format json whoami
-drive-board --token main-agent-token --format json files list main-agent
+drive-board --token main-agent-token --format json files ls main-agent
 drive-board --token main-agent-token workspaces add-member research-team --actor agent:cli-agent --permission write
 ```
 
@@ -40,11 +41,11 @@ export DRIVE_BOARD_FORMAT="json"
 
 ## 全局参数
 
-| 参数             | 环境变量             | 默认值                  | 是否必需     | 说明                                                                        |
-| ---------------- | -------------------- | ----------------------- | ------------ | --------------------------------------------------------------------------- |
-| `--server`       | `DRIVE_BOARD_SERVER` | `http://127.0.0.1:8362` | 否           | Drive Board 服务根地址。CLI 会自动去掉末尾 `/`。                            |
-| `--token`        | `DRIVE_BOARD_TOKEN`  | 无                      | 大多数命令是 | Bearer Token。未提供时，请求不会带 `Authorization` 头，通常会触发 401/403。 |
-| `--format`, `-f` | `DRIVE_BOARD_FORMAT` | `table`                 | 否           | 输出格式。允许值：`table`、`json`、`jsonl`。                                |
+| 参数             | 环境变量             | 默认值                  | 是否必需     | 说明                                                                                                         |
+| ---------------- | -------------------- | ----------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ |
+| `--server`       | `DRIVE_BOARD_SERVER` | `http://127.0.0.1:8362` | 否           | Drive Board 服务根地址。CLI 会自动去掉末尾 `/`，并用于把 `public-links` 返回的相对下载路径补成最终绝对链接。 |
+| `--token`        | `DRIVE_BOARD_TOKEN`  | 无                      | 大多数命令是 | Bearer Token。未提供时，请求不会带 `Authorization` 头，通常会触发 401/403。                                  |
+| `--format`, `-f` | `DRIVE_BOARD_FORMAT` | `table`                 | 否           | 输出格式。允许值：`table`、`json`、`jsonl`。                                                                 |
 
 ## 输出格式与错误行为
 
@@ -339,11 +340,42 @@ drive-board [全局参数] workspaces add-member <workspace> --actor <actor_id> 
 drive-board --token main-agent-token workspaces add-member research-team --actor agent:cli-agent --permission write
 ```
 
-### `files list`
+### `workspaces remove-member`
 
 语法：
 
 ```bash
+drive-board [全局参数] workspaces remove-member <workspace> <actor_id>
+```
+
+用途：
+
+- 从某个 workspace 移除成员。
+
+参数：
+
+| 参数        | 是否必需 | 含义                                      |
+| ----------- | -------- | ----------------------------------------- |
+| `workspace` | 是       | 目标工作区名。                            |
+| `actor_id`  | 是       | 要移除的成员 ID，例如 `agent:cli-agent`。 |
+
+说明：
+
+- 该命令要求当前 token 具备 workspace 成员管理权限。
+- 如果成员不存在，服务端会返回 404。
+
+示例：
+
+```bash
+drive-board --token main-agent-token workspaces remove-member research-team agent:cli-agent
+```
+
+### `files ls` / `files list`
+
+语法：
+
+```bash
+drive-board [全局参数] files ls <workspace> [path]
 drive-board [全局参数] files list <workspace> [path]
 ```
 
@@ -358,6 +390,11 @@ drive-board [全局参数] files list <workspace> [path]
 | `workspace` | 是       | 目标工作区名。                       |
 | `path`      | 否       | 目标目录相对路径。省略时表示根目录。 |
 
+说明：
+
+- `files ls` 是推荐写法，更接近 Linux 常见命名。
+- `files list` 是兼容别名，行为完全相同。
+
 返回结构：
 
 - 顶层对象包含 `workspace`、`path`、`permission`、`items`。
@@ -366,8 +403,8 @@ drive-board [全局参数] files list <workspace> [path]
 示例：
 
 ```bash
-drive-board --token main-agent-token --format json files list main-agent
-drive-board --token main-agent-token --format json files list main-agent reports
+drive-board --token main-agent-token --format json files ls main-agent
+drive-board --token main-agent-token --format json files ls main-agent reports
 ```
 
 ### `files mkdir`
@@ -563,11 +600,106 @@ echo "\n## 新增结论" | drive-board --token main-agent-token files append mai
 drive-board --token main-agent-token files append main-agent notes/readme.md --file ./appendix.md
 ```
 
-### `files delete`
+### `files cp`
 
 语法：
 
 ```bash
+drive-board [全局参数] files cp <workspace> <source_path> <destination_path>
+```
+
+用途：
+
+- 复制一个文件或文件夹到新的路径。
+
+参数：
+
+| 参数               | 是否必需 | 含义                       |
+| ------------------ | -------- | -------------------------- |
+| `workspace`        | 是       | 目标工作区名。             |
+| `source_path`      | 是       | 源文件或源文件夹相对路径。 |
+| `destination_path` | 是       | 目标相对路径，必须不存在。 |
+
+说明：
+
+- 目标路径已存在时，服务端返回 409。
+- 复制文件夹时会递归复制其内容。
+
+示例：
+
+```bash
+drive-board --token main-agent-token files cp main-agent reports/daily.md archive/daily.md
+```
+
+### `files mv`
+
+语法：
+
+```bash
+drive-board [全局参数] files mv <workspace> <source_path> <destination_path>
+```
+
+用途：
+
+- 移动一个文件或文件夹到新的路径。
+- 如果 `destination_path` 只改变文件名，也可以把它当作 Linux 风格的 rename 使用。
+
+参数：
+
+| 参数               | 是否必需 | 含义                       |
+| ------------------ | -------- | -------------------------- |
+| `workspace`        | 是       | 目标工作区名。             |
+| `source_path`      | 是       | 源文件或源文件夹相对路径。 |
+| `destination_path` | 是       | 目标相对路径，必须不存在。 |
+
+说明：
+
+- `mv` 会同步更新该路径上已有的分享权限和公开链接映射。
+- 目标路径已存在时，服务端返回 409。
+
+示例：
+
+```bash
+drive-board --token main-agent-token files mv main-agent reports/daily.md archive/summary.md
+```
+
+### `files rename`
+
+语法：
+
+```bash
+drive-board [全局参数] files rename <workspace> <path> <new_name>
+```
+
+用途：
+
+- 在当前父目录内重命名一个文件或文件夹。
+
+参数：
+
+| 参数        | 是否必需 | 含义                                 |
+| ----------- | -------- | ------------------------------------ |
+| `workspace` | 是       | 目标工作区名。                       |
+| `path`      | 是       | 要重命名的相对路径。                 |
+| `new_name`  | 是       | 新名称，只是名称本身，不要带父目录。 |
+
+说明：
+
+- 如果你已经知道完整目标路径，优先用 `files mv` 更接近标准命名。
+- 如果你只想改 basename，不想自己拼目标路径，用 `files rename` 更直接。
+
+示例：
+
+```bash
+drive-board --token main-agent-token files rename main-agent archive/summary.md final.md
+```
+
+### `files rm` / `files delete`
+
+语法：
+
+```bash
+drive-board [全局参数] files rm <workspace> <path>
 drive-board [全局参数] files delete <workspace> <path>
 ```
 
@@ -582,10 +714,15 @@ drive-board [全局参数] files delete <workspace> <path>
 | `workspace` | 是       | 目标工作区名。                         |
 | `path`      | 是       | 要删除的相对路径。可指向文件或文件夹。 |
 
+说明：
+
+- `files rm` 是推荐写法。
+- `files delete` 是兼容别名，行为完全相同。
+
 示例：
 
 ```bash
-drive-board --token main-agent-token files delete main-agent reports/a.pdf
+drive-board --token main-agent-token files rm main-agent reports/a.pdf
 ```
 
 ### `files preview-url`
@@ -656,11 +793,12 @@ drive-board [全局参数] shares add <workspace> <path> --actor <actor_id> [--p
 drive-board --token main-agent-token shares add main-agent reports --actor agent:cli-agent --permission read
 ```
 
-### `shares list`
+### `shares ls` / `shares list`
 
 语法：
 
 ```bash
+drive-board [全局参数] shares ls <workspace> [--path <relative_path>]
 drive-board [全局参数] shares list <workspace> [--path <relative_path>]
 ```
 
@@ -677,13 +815,43 @@ drive-board [全局参数] shares list <workspace> [--path <relative_path>]
 
 说明：
 
+- `shares ls` 是推荐写法；`shares list` 是兼容别名。
 - 这个命令用于查看“我分享出去的记录”。
 - 如果只想查看某一路径是否已被分享，传 `--path` 能减少返回量。
 
 示例：
 
 ```bash
-drive-board --token main-agent-token --format json shares list main-agent --path reports
+drive-board --token main-agent-token --format json shares ls main-agent --path reports
+```
+
+### `shares rm`
+
+语法：
+
+```bash
+drive-board [全局参数] shares rm <share_id>
+```
+
+用途：
+
+- 取消一条已有分享记录。
+
+参数：
+
+| 参数       | 是否必需 | 含义                                       |
+| ---------- | -------- | ------------------------------------------ |
+| `share_id` | 是       | 分享记录 ID，通常先通过 `shares ls` 查询。 |
+
+说明：
+
+- 该命令删除的是一条具体分享记录，不会删除源文件。
+- 如果 `share_id` 不存在，服务端返回 404。
+
+示例：
+
+```bash
+drive-board --token main-agent-token shares rm 12
 ```
 
 ### `shares shared`
@@ -714,16 +882,106 @@ drive-board [全局参数] shares shared
 drive-board --token cli-agent-token --format json shares shared
 ```
 
+### `public-links create`
+
+语法：
+
+```bash
+drive-board [全局参数] public-links create <workspace> <path>
+```
+
+用途：
+
+- 为一个文件创建公开下载链接。
+
+参数：
+
+| 参数        | 是否必需 | 含义                           |
+| ----------- | -------- | ------------------------------ |
+| `workspace` | 是       | 目标工作区名。                 |
+| `path`      | 是       | 目标文件相对路径，必须是文件。 |
+
+说明：
+
+- 公开链接仅支持文件，不支持文件夹。
+- 同一个文件最多只会保留一个公开链接；如果再次执行 `public-links create`，CLI 会返回已有链接，而不会生成第二条。
+- CLI 会根据当前 `--server` 把服务端返回的相对下载路径补成 `public_link.download_url`，因此它是最终可访问的完整绝对链接，可以直接复制、打开或发给别人。
+- `public_link` 对象还会包含 `id`、`path`、`token`、`created_at` 等字段。
+
+示例：
+
+```bash
+drive-board --token main-agent-token --format json public-links create main-agent reports/a.pdf
+```
+
+### `public-links ls` / `public-links list`
+
+语法：
+
+```bash
+drive-board [全局参数] public-links ls <workspace> [--path <relative_path>]
+drive-board [全局参数] public-links list <workspace> [--path <relative_path>]
+```
+
+用途：
+
+- 列出某个 workspace 下的公开链接，或只看某个特定路径上的公开链接。
+
+参数：
+
+| 参数        | 是否必需 | 含义                                                                    |
+| ----------- | -------- | ----------------------------------------------------------------------- |
+| `workspace` | 是       | 目标工作区名。                                                          |
+| `--path`    | 否       | 只看某个具体路径上的公开链接；省略时列出当前 workspace 下全部公开链接。 |
+
+说明：
+
+- `public-links ls` 是推荐写法；`public-links list` 是兼容别名。
+- 不传 `--path` 时，返回 `target_kind=workspace` 和整个 workspace 范围内的 `public_links` 数组。
+- CLI 会根据当前 `--server` 把 `public_links[*].download_url` 补成最终可访问的完整绝对链接。
+
+示例：
+
+```bash
+drive-board --token main-agent-token --format json public-links ls main-agent
+drive-board --token main-agent-token --format json public-links ls main-agent --path reports/a.pdf
+```
+
+### `public-links rm`
+
+语法：
+
+```bash
+drive-board [全局参数] public-links rm <link_id>
+```
+
+用途：
+
+- 撤销一个已有公开链接。
+
+参数：
+
+| 参数      | 是否必需 | 含义                                                 |
+| --------- | -------- | ---------------------------------------------------- |
+| `link_id` | 是       | 公开链接记录 ID，通常先通过 `public-links ls` 查询。 |
+
+说明：
+
+- 该命令只撤销公开链接，不会删除原文件。
+- 如果 `link_id` 不存在，服务端返回 404。
+
+示例：
+
+```bash
+drive-board --token main-agent-token public-links rm 3
+```
+
 ## 当前 CLI 不支持的操作
 
 下面这些能力当前不要尝试用 `drive-board` CLI 直接做，因为命令面里没有实现对应子命令：
 
 - 创建、更新、删除 actor。
 - 删除 workspace。
-- 从 workspace 移除成员。
-- 取消已有分享记录。
-- 创建或撤销公开链接。
-- 文件复制、移动、重命名。
 - 通过 CLI 直接编辑二进制文件内容。
 
 如果未来 CLI 命令面扩展，应以 `drive-board --help` 和对应子命令 `--help` 为准，不要假设 API 已有的能力就一定已经暴露到 CLI。

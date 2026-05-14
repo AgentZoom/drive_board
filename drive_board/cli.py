@@ -22,6 +22,7 @@ actors_app = typer.Typer(help="List users and agents.")
 workspaces_app = typer.Typer(help="Workspace commands.")
 files_app = typer.Typer(help="File and folder commands.")
 shares_app = typer.Typer(help="File and folder sharing commands.")
+public_links_app = typer.Typer(help="Authenticated public link commands.")
 console = Console()
 
 
@@ -95,6 +96,24 @@ def request(method: str, url: str, **kwargs: Any) -> Any:
     if response.headers.get("content-type", "").startswith("application/json"):
         return response.json()
     return response.text
+
+
+def absolute_server_url(path: str) -> str:
+    if path.startswith(("http://", "https://")):
+        return path
+    normalized = path if path.startswith("/") else f"/{path}"
+    return f"{state.server}{normalized}"
+
+
+def absolutize_public_link_payload(data: Any) -> Any:
+    if isinstance(data, dict):
+        converted = {key: absolutize_public_link_payload(value) for key, value in data.items()}
+        if isinstance(converted.get("download_url"), str):
+            converted["download_url"] = absolute_server_url(converted["download_url"])
+        return converted
+    if isinstance(data, list):
+        return [absolutize_public_link_payload(item) for item in data]
+    return data
 
 
 def read_text_input(
@@ -261,10 +280,26 @@ def workspaces_add_member(
     )
 
 
+@workspaces_app.command("remove-member")
+def workspaces_remove_member(workspace: str, actor_id: str):
+    """Remove a member from a workspace."""
+    print_output(request("DELETE", f"/api/workspaces/{workspace}/members/{actor_id}"))
+
+
+def _files_list_impl(workspace: str, path: str = "") -> None:
+    print_output(request("GET", "/api/files", params={"workspace": workspace, "path": path}))
+
+
+@files_app.command("ls")
+def files_ls(workspace: str, path: str = ""):
+    """List a folder."""
+    _files_list_impl(workspace, path)
+
+
 @files_app.command("list")
 def files_list(workspace: str, path: str = ""):
-    """List a folder."""
-    print_output(request("GET", "/api/files", params={"workspace": workspace, "path": path}))
+    """Alias for ls."""
+    _files_list_impl(workspace, path)
 
 
 @files_app.command("mkdir")
@@ -366,10 +401,68 @@ def files_append(
     )
 
 
+@files_app.command("cp")
+def files_cp(workspace: str, source_path: str, destination_path: str):
+    """Copy a file or folder to another path."""
+    print_output(
+        request(
+            "POST",
+            "/api/files/copy",
+            json={
+                "workspace": workspace,
+                "source_path": source_path,
+                "destination_path": destination_path,
+            },
+        )
+    )
+
+
+@files_app.command("mv")
+def files_mv(workspace: str, source_path: str, destination_path: str):
+    """Move a file or folder to another path."""
+    print_output(
+        request(
+            "POST",
+            "/api/files/move",
+            json={
+                "workspace": workspace,
+                "source_path": source_path,
+                "destination_path": destination_path,
+            },
+        )
+    )
+
+
+@files_app.command("rename")
+def files_rename(workspace: str, path: str, new_name: str):
+    """Rename a file or folder inside its current parent directory."""
+    print_output(
+        request(
+            "POST",
+            "/api/files/rename",
+            json={
+                "workspace": workspace,
+                "path": path,
+                "new_name": new_name,
+            },
+        )
+    )
+
+
+def _files_delete_impl(workspace: str, path: str) -> None:
+    print_output(request("DELETE", "/api/files", params={"workspace": workspace, "path": path}))
+
+
+@files_app.command("rm")
+def files_rm(workspace: str, path: str):
+    """Delete a file or folder."""
+    _files_delete_impl(workspace, path)
+
+
 @files_app.command("delete")
 def files_delete(workspace: str, path: str):
-    """Delete a file or folder."""
-    print_output(request("DELETE", "/api/files", params={"workspace": workspace, "path": path}))
+    """Alias for rm."""
+    _files_delete_impl(workspace, path)
 
 
 @files_app.command("preview-url")
@@ -401,13 +494,29 @@ def shares_add(
     )
 
 
-@shares_app.command("list")
-def shares_list(workspace: str, path: str | None = typer.Option(None, "--path")):
-    """List shares on a workspace path."""
+def _shares_list_impl(workspace: str, path: str | None = None) -> None:
     params = {"workspace": workspace}
     if path is not None:
         params["path"] = path
     print_output(request("GET", "/api/shares", params=params))
+
+
+@shares_app.command("ls")
+def shares_ls(workspace: str, path: str | None = typer.Option(None, "--path")):
+    """List shares on a workspace path."""
+    _shares_list_impl(workspace, path)
+
+
+@shares_app.command("list")
+def shares_list(workspace: str, path: str | None = typer.Option(None, "--path")):
+    """Alias for ls."""
+    _shares_list_impl(workspace, path)
+
+
+@shares_app.command("rm")
+def shares_remove(share_id: int):
+    """Cancel an existing share record."""
+    print_output(request("DELETE", f"/api/shares/{share_id}"))
 
 
 @shares_app.command("shared")
@@ -416,10 +525,46 @@ def shares_shared():
     print_output(request("GET", "/api/shared"))
 
 
+def _public_links_list_impl(workspace: str, path: str | None = None) -> None:
+    params = {"workspace": workspace}
+    if path is not None:
+        params["path"] = path
+    print_output(absolutize_public_link_payload(request("GET", "/api/public-links", params=params)))
+
+
+@public_links_app.command("create")
+def public_links_create(workspace: str, path: str):
+    """Create a public download link for a file."""
+    print_output(
+        absolutize_public_link_payload(
+            request("POST", "/api/public-links", json={"workspace": workspace, "path": path})
+        )
+    )
+
+
+@public_links_app.command("ls")
+def public_links_ls(workspace: str, path: str | None = typer.Option(None, "--path")):
+    """List public links on a workspace or a specific path."""
+    _public_links_list_impl(workspace, path)
+
+
+@public_links_app.command("list")
+def public_links_list(workspace: str, path: str | None = typer.Option(None, "--path")):
+    """Alias for ls."""
+    _public_links_list_impl(workspace, path)
+
+
+@public_links_app.command("rm")
+def public_links_remove(link_id: int):
+    """Revoke a public link by id."""
+    print_output(request("DELETE", f"/api/public-links/{link_id}"))
+
+
 app.add_typer(actors_app, name="actors")
 app.add_typer(workspaces_app, name="workspaces")
 app.add_typer(files_app, name="files")
 app.add_typer(shares_app, name="shares")
+app.add_typer(public_links_app, name="public-links")
 
 
 if __name__ == "__main__":

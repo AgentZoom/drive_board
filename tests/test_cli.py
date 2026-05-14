@@ -166,3 +166,157 @@ def test_files_upload_supports_named_remote_file_path(monkeypatch, tmp_path):
         "path": "reports/renamed.md",
         "overwrite": "false",
     }
+
+
+def test_workspace_share_and_public_link_remove_commands_use_expected_routes(monkeypatch):
+    request_calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        request_calls.append((method, url, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(cli_module, "request", fake_request)
+    monkeypatch.setattr(cli_module, "print_output", lambda data: None)
+
+    cli_module.workspaces_remove_member("research-team", "agent:cli-agent")
+    cli_module.shares_remove(7)
+    cli_module.public_links_remove(11)
+
+    assert request_calls == [
+        ("DELETE", "/api/workspaces/research-team/members/agent:cli-agent", {}),
+        ("DELETE", "/api/shares/7", {}),
+        ("DELETE", "/api/public-links/11", {}),
+    ]
+
+
+def test_files_linux_style_commands_send_expected_payloads(monkeypatch):
+    request_calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        request_calls.append((method, url, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(cli_module, "request", fake_request)
+    monkeypatch.setattr(cli_module, "print_output", lambda data: None)
+
+    cli_module.files_ls("main-agent", "reports")
+    cli_module.files_cp("main-agent", "reports/a.md", "archive/a.md")
+    cli_module.files_mv("main-agent", "archive/a.md", "archive/final.md")
+    cli_module.files_rename("main-agent", "archive/final.md", "summary.md")
+    cli_module.files_rm("main-agent", "archive/summary.md")
+
+    assert request_calls == [
+        ("GET", "/api/files", {"params": {"workspace": "main-agent", "path": "reports"}}),
+        (
+            "POST",
+            "/api/files/copy",
+            {
+                "json": {
+                    "workspace": "main-agent",
+                    "source_path": "reports/a.md",
+                    "destination_path": "archive/a.md",
+                }
+            },
+        ),
+        (
+            "POST",
+            "/api/files/move",
+            {
+                "json": {
+                    "workspace": "main-agent",
+                    "source_path": "archive/a.md",
+                    "destination_path": "archive/final.md",
+                }
+            },
+        ),
+        (
+            "POST",
+            "/api/files/rename",
+            {
+                "json": {
+                    "workspace": "main-agent",
+                    "path": "archive/final.md",
+                    "new_name": "summary.md",
+                }
+            },
+        ),
+        ("DELETE", "/api/files", {"params": {"workspace": "main-agent", "path": "archive/summary.md"}}),
+    ]
+
+
+def test_public_link_commands_send_expected_payloads(monkeypatch):
+    request_calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        request_calls.append((method, url, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(cli_module, "request", fake_request)
+    monkeypatch.setattr(cli_module, "print_output", lambda data: None)
+
+    cli_module.public_links_create("main-agent", "reports/a.pdf")
+    cli_module.public_links_ls("main-agent", path=None)
+    cli_module.public_links_ls("main-agent", path="reports/a.pdf")
+    cli_module.shares_ls("main-agent", path="reports")
+
+    assert request_calls == [
+        (
+            "POST",
+            "/api/public-links",
+            {"json": {"workspace": "main-agent", "path": "reports/a.pdf"}},
+        ),
+        ("GET", "/api/public-links", {"params": {"workspace": "main-agent"}}),
+        (
+            "GET",
+            "/api/public-links",
+            {"params": {"workspace": "main-agent", "path": "reports/a.pdf"}},
+        ),
+        ("GET", "/api/shares", {"params": {"workspace": "main-agent", "path": "reports"}}),
+    ]
+
+
+def test_public_link_commands_absolutize_download_urls_from_server(monkeypatch):
+    outputs: list[dict] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        if method == "POST":
+            return {
+                "public_link": {
+                    "id": 3,
+                    "download_url": "/public/token-123",
+                }
+            }
+        return {
+            "target_kind": "file",
+            "public_links": [
+                {
+                    "id": 3,
+                    "download_url": "/public/token-123",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(cli_module, "request", fake_request)
+    monkeypatch.setattr(cli_module, "print_output", lambda data: outputs.append(data))
+    monkeypatch.setattr(cli_module.state, "server", "https://drive.example.com")
+
+    cli_module.public_links_create("main-agent", "reports/a.pdf")
+    cli_module.public_links_ls("main-agent", path="reports/a.pdf")
+
+    assert outputs == [
+        {
+            "public_link": {
+                "id": 3,
+                "download_url": "https://drive.example.com/public/token-123",
+            }
+        },
+        {
+            "target_kind": "file",
+            "public_links": [
+                {
+                    "id": 3,
+                    "download_url": "https://drive.example.com/public/token-123",
+                }
+            ],
+        },
+    ]

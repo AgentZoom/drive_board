@@ -142,6 +142,7 @@ class Database:
                 """
             )
             self._ensure_actor_schema(connection)
+            self._ensure_public_link_schema(connection)
             count = connection.execute("SELECT COUNT(*) FROM actors").fetchone()[0]
             if count == 0:
                 self._seed(connection)
@@ -163,6 +164,27 @@ class Database:
                 """,
                 (token, actor_id, hash_token(token)),
             )
+
+    def _ensure_public_link_schema(self, connection: sqlite3.Connection) -> None:
+        duplicate_rows = connection.execute(
+            """
+            SELECT workspace_id, path, MIN(id) AS keep_id
+            FROM public_links
+            GROUP BY workspace_id, path
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        for row in duplicate_rows:
+            connection.execute(
+                "DELETE FROM public_links WHERE workspace_id = ? AND path = ? AND id != ?",
+                (row["workspace_id"], row["path"], row["keep_id"]),
+            )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_public_links_workspace_path_unique
+            ON public_links(workspace_id, path)
+            """
+        )
 
     def _seed(self, connection: sqlite3.Connection) -> None:
         self.create_actor(
@@ -717,6 +739,19 @@ class Database:
         if not normalized:
             raise ValueError("public links require a file path")
         with closing(self.connect()) as connection:
+            existing = connection.execute(
+                """
+                SELECT p.*, a.display_name AS created_by_name
+                FROM public_links p
+                LEFT JOIN actors a ON a.actor_id = p.created_by
+                WHERE p.workspace_id = ? AND p.path = ?
+                ORDER BY p.id ASC
+                LIMIT 1
+                """,
+                (workspace_id, normalized),
+            ).fetchone()
+            if existing is not None:
+                return dict(existing)
             item_id: int | None = None
             token: str | None = None
             for _ in range(8):
@@ -733,6 +768,20 @@ class Database:
                     connection.commit()
                     break
                 except sqlite3.IntegrityError:
+                    connection.rollback()
+                    existing = connection.execute(
+                        """
+                        SELECT p.*, a.display_name AS created_by_name
+                        FROM public_links p
+                        LEFT JOIN actors a ON a.actor_id = p.created_by
+                        WHERE p.workspace_id = ? AND p.path = ?
+                        ORDER BY p.id ASC
+                        LIMIT 1
+                        """,
+                        (workspace_id, normalized),
+                    ).fetchone()
+                    if existing is not None:
+                        return dict(existing)
                     continue
             if not item_id or not token:
                 raise ValueError("failed to create public link")

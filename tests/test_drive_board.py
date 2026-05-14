@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 from fastapi.testclient import TestClient
 
 from drive_board.main import create_app
@@ -259,6 +261,15 @@ def test_public_link_download_and_revoke(tmp_path):
     )
     assert created.status_code == 200, created.text
     link = created.json()["public_link"]
+    assert link["download_url"].startswith("/public/")
+
+    recreated = client.post(
+        "/api/public-links",
+        json={"workspace": "huangshiyu", "path": "public-note.txt"},
+    )
+    assert recreated.status_code == 200, recreated.text
+    assert recreated.json()["public_link"]["id"] == link["id"]
+    assert recreated.json()["public_link"]["token"] == link["token"]
 
     listed = client.get(
         "/api/public-links",
@@ -277,6 +288,53 @@ def test_public_link_download_and_revoke(tmp_path):
 
     revoked_download = anonymous.get(link["download_url"])
     assert revoked_download.status_code == 404, revoked_download.text
+
+
+def test_public_link_schema_deduplicates_existing_rows_on_startup(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    create_text = client.post(
+        "/api/files/text",
+        json={
+            "workspace": "huangshiyu",
+            "path": "dup-note.txt",
+            "content": "duplicate cleanup",
+        },
+    )
+    assert create_text.status_code == 200, create_text.text
+
+    created = client.post(
+        "/api/public-links",
+        json={"workspace": "huangshiyu", "path": "dup-note.txt"},
+    )
+    assert created.status_code == 200, created.text
+    first_link = created.json()["public_link"]
+
+    db_path = tmp_path / "drive_board.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP INDEX IF EXISTS idx_public_links_workspace_path_unique")
+        connection.execute(
+            """
+            INSERT INTO public_links (workspace_id, path, token, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (2, "dup-note.txt", "legacy-duplicate-token", "user:huangshiyu", "2026-05-14T07:00:00+00:00"),
+        )
+        connection.commit()
+
+    restarted = make_client(tmp_path)
+    login(restarted)
+
+    listed = restarted.get(
+        "/api/public-links",
+        params={"workspace": "huangshiyu", "path": "dup-note.txt"},
+    )
+    assert listed.status_code == 200, listed.text
+    public_links = listed.json()["public_links"]
+    assert len(public_links) == 1
+    assert public_links[0]["id"] == first_link["id"]
+    assert public_links[0]["token"] == first_link["token"]
 
 
 def test_share_member_and_actor_management_routes(tmp_path):
@@ -441,6 +499,7 @@ def test_file_copy_move_rename_and_share_path_updates(tmp_path):
     )
     assert public_link.status_code == 200, public_link.text
     public_download_url = public_link.json()["public_link"]["download_url"]
+    assert public_download_url.startswith("/public/")
 
     renamed = client.post(
         "/api/files/rename",
