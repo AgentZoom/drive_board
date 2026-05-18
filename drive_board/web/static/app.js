@@ -499,17 +499,30 @@ async function downloadItem(item, workspace = state.currentWorkspace, href = dow
 
 async function copyText(value) {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Fall back to a manual copy path when Clipboard API is unavailable.
+    }
   }
   const textarea = document.createElement("textarea");
   textarea.value = value;
   textarea.setAttribute("readonly", "readonly");
-  textarea.className = "hidden";
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
   document.body.append(textarea);
+  textarea.focus();
   textarea.select();
-  document.execCommand("copy");
+  textarea.setSelectionRange(0, textarea.value.length);
+  const copied = document.execCommand("copy");
   textarea.remove();
+  if (!copied) {
+    throw new Error("copy failed");
+  }
 }
 
 function normalizePathInput(value) {
@@ -1899,8 +1912,12 @@ function bindPublicLinkActions(container, { workspace, path, refresh }) {
 
   container.querySelectorAll('[data-action="copy-public-link"]').forEach((button) => {
     button.addEventListener("click", async () => {
-      await copyText(button.dataset.publicLinkUrl);
-      toast("公开链接已复制");
+      try {
+        await copyText(button.dataset.publicLinkUrl);
+        toast("公开链接已复制");
+      } catch {
+        toast("复制失败，请手动复制输入框里的链接");
+      }
     });
   });
 
