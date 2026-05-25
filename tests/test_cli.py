@@ -249,6 +249,36 @@ def test_cli_reports_http_errors_without_traceback(monkeypatch):
     assert "TypeError" not in result.output
 
 
+def test_workspaces_add_member_requires_prefixed_actor_id(monkeypatch):
+    def fail_request(method: str, url: str, **kwargs):
+        raise AssertionError("request should not be called")
+
+    monkeypatch.setattr(cli_module, "request", fail_request)
+
+    result = runner.invoke(
+        cli_module.app,
+        ["workspaces", "add-member", "research-team", "--actor", "test_agent_2", "--permission", "read"],
+    )
+
+    assert result.exit_code == 1
+    assert "actor_id must include prefix" in result.output
+
+
+def test_workspaces_add_member_rejects_invalid_permission_locally(monkeypatch):
+    def fail_request(method: str, url: str, **kwargs):
+        raise AssertionError("request should not be called")
+
+    monkeypatch.setattr(cli_module, "request", fail_request)
+
+    result = runner.invoke(
+        cli_module.app,
+        ["workspaces", "add-member", "research-team", "--actor", "agent:cli-agent", "--permission", "admin"],
+    )
+
+    assert result.exit_code == 1
+    assert "permission must be one of: owner, read, write" in result.output
+
+
 def test_cli_json_output_is_machine_readable_for_long_preview_urls():
     long_path = "/".join(["nested"] * 30 + ["index.html"])
 

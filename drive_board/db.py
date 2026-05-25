@@ -653,7 +653,20 @@ class Database:
                 """,
                 (workspace_id, actor["actor_id"]),
             ).fetchone()
-            return bool(row and row["permission"] in {"write", "owner"})
+            return bool(row and row["permission"] == "owner")
+
+    def can_manage_shares(self, actor: dict[str, Any], workspace_id: int) -> bool:
+        if actor["is_admin"]:
+            return True
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT permission FROM workspace_members
+                WHERE workspace_id = ? AND actor_id = ?
+                """,
+                (workspace_id, actor["actor_id"]),
+            ).fetchone()
+            return bool(row and row["permission"] == "owner")
 
     def can_delete_workspace(self, actor: dict[str, Any], workspace_id: int) -> bool:
         if actor["is_admin"]:
@@ -738,6 +751,17 @@ class Database:
     def delete_item_permission(self, item_id: int) -> None:
         with closing(self.connect()) as connection:
             connection.execute("DELETE FROM item_permissions WHERE id = ?", (item_id,))
+            connection.commit()
+
+    def delete_item_permissions_for_path(self, workspace_id: int, path: str) -> None:
+        normalized = normalize_path(path)
+        if not normalized:
+            return
+        with closing(self.connect()) as connection:
+            connection.execute(
+                "DELETE FROM item_permissions WHERE workspace_id = ? AND (path = ? OR path LIKE ?)",
+                (workspace_id, normalized, f"{normalized}/%"),
+            )
             connection.commit()
 
     def create_public_link(

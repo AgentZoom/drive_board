@@ -307,6 +307,35 @@ def test_file_lifecycle_and_text_edit(tmp_path):
     assert download.text == "# Hello"
 
 
+def test_text_write_rejects_invalid_paths_and_existing_folder_targets(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    create_folder = client.post("/api/folders", json={"workspace": "huangshiyu", "path": "notes"})
+    assert create_folder.status_code == 200, create_folder.text
+
+    absolute_path = client.post(
+        "/api/files/text",
+        json={"workspace": "huangshiyu", "path": "/bad.txt", "content": "bad"},
+    )
+    assert absolute_path.status_code == 400, absolute_path.text
+    assert "absolute paths are not allowed" in absolute_path.text
+
+    traversal_path = client.post(
+        "/api/files/text",
+        json={"workspace": "huangshiyu", "path": "../bad.txt", "content": "bad"},
+    )
+    assert traversal_path.status_code == 400, traversal_path.text
+    assert "parent directory traversal is not allowed" in traversal_path.text
+
+    folder_target = client.post(
+        "/api/files/text",
+        json={"workspace": "huangshiyu", "path": "notes", "content": "bad"},
+    )
+    assert folder_target.status_code == 409, folder_target.text
+    assert "existing folder" in folder_target.text
+
+
 def test_folder_share_and_html_relative_preview(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -780,6 +809,153 @@ def test_share_member_and_actor_management_routes(tmp_path):
         json={"username": "newuser", "password": "updated-secret-456"},
     )
     assert deleted_login.status_code == 401, deleted_login.text
+
+
+def test_workspace_write_member_cannot_manage_members(tmp_path):
+    owner_client = make_client(tmp_path)
+    write_client = make_client(tmp_path)
+
+    login(owner_client)
+    create_workspace = owner_client.post(
+        "/api/workspaces",
+        json={
+            "name": "team-escalation",
+            "kind": "share_group",
+            "members": [{"actor_id": "agent:main-agent", "permission": "write"}],
+        },
+    )
+    assert create_workspace.status_code == 200, create_workspace.text
+
+    escalate_self = write_client.post(
+        "/api/workspaces/team-escalation/members",
+        json={"actor_id": "agent:main-agent", "permission": "owner"},
+        headers=agent_headers(),
+    )
+    assert escalate_self.status_code == 403, escalate_self.text
+    assert "owner permission required" in escalate_self.text
+
+    demote_owner = write_client.post(
+        "/api/workspaces/team-escalation/members",
+        json={"actor_id": "user:huangshiyu", "permission": "read"},
+        headers=agent_headers(),
+    )
+    assert demote_owner.status_code == 403, demote_owner.text
+
+    members = owner_client.get("/api/workspaces/team-escalation/members")
+    assert members.status_code == 200, members.text
+    permissions = {item["actor_id"]: item["permission"] for item in members.json()["members"]}
+    assert permissions["user:huangshiyu"] == "owner"
+    assert permissions["agent:main-agent"] == "write"
+
+    delete_workspace = owner_client.delete("/api/workspaces/team-escalation")
+    assert delete_workspace.status_code == 200, delete_workspace.text
+
+
+def test_duplicate_share_group_workspace_returns_409(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    created = client.post(
+        "/api/workspaces",
+        json={"name": "team-dup", "kind": "share_group", "members": []},
+    )
+    assert created.status_code == 200, created.text
+
+    duplicate = client.post(
+        "/api/workspaces",
+        json={"name": "team-dup", "kind": "share_group", "members": []},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    assert "workspace already exists" in duplicate.text
+
+
+def test_path_write_share_cannot_create_public_links_or_forward_share(tmp_path):
+    owner_client = make_client(tmp_path)
+    shared_client = make_client(tmp_path)
+
+    login(owner_client)
+    create_text = owner_client.post(
+        "/api/files/text",
+        json={
+            "workspace": "huangshiyu",
+            "path": "shared/report.txt",
+            "content": "sensitive report",
+        },
+    )
+    assert create_text.status_code == 200, create_text.text
+
+    create_share = owner_client.post(
+        "/api/shares",
+        json={
+            "workspace": "huangshiyu",
+            "path": "shared/report.txt",
+            "actor_id": "agent:main-agent",
+            "permission": "write",
+        },
+    )
+    assert create_share.status_code == 200, create_share.text
+
+    create_public_link = shared_client.post(
+        "/api/public-links",
+        json={"workspace": "huangshiyu", "path": "shared/report.txt"},
+        headers=agent_headers(),
+    )
+    assert create_public_link.status_code == 403, create_public_link.text
+    assert "owner permission required" in create_public_link.text
+
+    forward_share = shared_client.post(
+        "/api/shares",
+        json={
+            "workspace": "huangshiyu",
+            "path": "shared/report.txt",
+            "actor_id": "agent:cli-agent",
+            "permission": "read",
+        },
+        headers=agent_headers(),
+    )
+    assert forward_share.status_code == 403, forward_share.text
+    assert "owner permission required" in forward_share.text
+
+
+def test_deleting_directory_cleans_stale_share_records(tmp_path):
+    owner_client = make_client(tmp_path)
+    shared_client = make_client(tmp_path)
+
+    login(owner_client)
+    create_text = owner_client.post(
+        "/api/files/text",
+        json={
+            "workspace": "huangshiyu",
+            "path": "reports/2026/daily.md",
+            "content": "daily report",
+        },
+    )
+    assert create_text.status_code == 200, create_text.text
+
+    create_share = owner_client.post(
+        "/api/shares",
+        json={
+            "workspace": "huangshiyu",
+            "path": "reports/2026/daily.md",
+            "actor_id": "agent:main-agent",
+            "permission": "read",
+        },
+    )
+    assert create_share.status_code == 200, create_share.text
+
+    delete_folder = owner_client.delete(
+        "/api/files",
+        params={"workspace": "huangshiyu", "path": "reports"},
+    )
+    assert delete_folder.status_code == 200, delete_folder.text
+
+    shares_after_delete = owner_client.get("/api/shares", params={"workspace": "huangshiyu"})
+    assert shares_after_delete.status_code == 200, shares_after_delete.text
+    assert shares_after_delete.json()["shares"] == []
+
+    shared_after_delete = shared_client.get("/api/shared", headers=agent_headers())
+    assert shared_after_delete.status_code == 200, shared_after_delete.text
+    assert shared_after_delete.json()["items"] == []
 
 
 def test_file_copy_move_rename_and_share_path_updates(tmp_path):

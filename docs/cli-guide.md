@@ -14,10 +14,11 @@ CLI 统一通过 Bearer Token 鉴权，不使用网页端账号密码登录流�
 4. 涉及成员或分享对象时，`actor_id` 必须带前缀，格式是 `user:<username>` 或 `agent:<name>`。
 5. `workspaces add-member` 的 `--permission` 允许值是 `read`、`write`、`owner`。
 6. `shares add` 的 `--permission` 允许值是 `read`、`write`。
-7. `files write` 和 `files append` 都必须二选一传入 `--file` 或 `--stdin`，不能两个都传，也不能两个都不传。
-8. 文件操作优先使用 Linux 风格命名：`files ls`、`files rm`、`files cp`、`files mv`；旧的 `files list`、`files delete` 仍然可用，但更推荐前者。
-9. `files upload --path` 为空时上传到根目录；以 `/` 结尾时表示目标目录；不以 `/` 结尾时表示最终远端文件路径。
-10. `files preview-url` 只是本地拼接 URL，不会向服务端发请求，也不会预先验证文件是否存在或当前 token 是否有权限。
+7. 只有 workspace 的 `owner` 或管理员能管理成员、分享记录和公开链接；路径级 `write` 只代表内容写权限，不代表可再授权。
+8. `files write` 和 `files append` 都必须二选一传入 `--file` 或 `--stdin`，不能两个都传，也不能两个都不传。
+9. 文件操作优先使用 Linux 风格命名：`files ls`、`files rm`、`files cp`、`files mv`；旧的 `files list`、`files delete` 仍然可用，但更推荐前者。
+10. `files upload --path` 为空时上传到根目录；以 `/` 结尾时表示目标目录；不以 `/` 结尾时表示最终远端文件路径。
+11. `files preview-url` 只是本地拼接 URL，不会向服务端发请求，也不会预先验证文件是否存在或当前 token 是否有权限。
 
 ## 命令结构
 
@@ -343,6 +344,7 @@ drive-board [全局参数] workspaces add-member <workspace> --actor <actor_id> 
 
 - 这是“新增或覆盖”语义，不是只允许新增。
 - 如果成员已存在，权限会被更新成新值。
+- 只有该 workspace 的 `owner` 或管理员能执行；`write` 成员不能修改成员关系。
 
 示例：
 
@@ -373,6 +375,7 @@ drive-board [全局参数] workspaces remove-member <workspace> <actor_id>
 
 - 该命令要求当前 token 具备 workspace 成员管理权限。
 - 如果成员不存在，服务端会返回 404。
+- `write` 成员不能移除其他成员；需要 `owner` 或管理员权限。
 
 示例：
 
@@ -835,6 +838,7 @@ drive-board [全局参数] shares add <workspace> <path> --actor <actor_id> [--p
 
 - 分享文件夹后，接收方可访问该文件夹下子文件。
 - 这是“路径级分享”，不是 workspace 成员关系。
+- 只有该 workspace 的 `owner` 或管理员能创建分享；路径级 `write` 分享不能继续转分享。
 
 示例：
 
@@ -870,6 +874,7 @@ drive-board [全局参数] shares list <workspace> [path]
 - 这个命令用于查看“我分享出去的记录”。
 - 如果只想查看某一路径是否已被分享，传 `--path` 能减少返回量。
 - 位置参数写法 `shares ls main-agent reports` 与 `shares ls main-agent --path reports` 等价。
+- 只有该 workspace 的 `owner` 或管理员能查看分享记录。
 
 示例：
 
@@ -899,6 +904,7 @@ drive-board [全局参数] shares rm <share_id>
 
 - 该命令删除的是一条具体分享记录，不会删除源文件。
 - 如果 `share_id` 不存在，服务端返回 404。
+- 只有该 workspace 的 `owner` 或管理员能删除分享记录。
 
 示例：
 
@@ -957,6 +963,7 @@ drive-board [全局参数] public-links create <workspace> <path>
 
 - 公开链接仅支持文件，不支持文件夹。
 - 同一个文件最多只会保留一个公开链接；如果再次执行 `public-links create`，CLI 会返回已有链接，而不会生成第二条。
+- 只有该 workspace 的 `owner` 或管理员能创建公开链接；路径级 `write` 分享不能为文件创建公开链接。
 - 如果目标文件是 `.html` 或 `.htm`，公开链接会直接按网页渲染，而不是强制下载 HTML 文件。
 - HTML 公开链接只适合单文件页面；公开访问时不会额外暴露相对路径依赖的 CSS、JS、图片等资源，所以样式和脚本必须内联在同一个 HTML 文件里。
 - CLI 会把服务端的 `public_link` 包装层自动拆掉，所以 `--format json` 下返回的顶层对象本身就包含 `id`、`path`、`token`、`created_at`、`download_url` 等字段。
@@ -996,6 +1003,7 @@ drive-board [全局参数] public-links list <workspace> [path]
 - 不传 `--path` 时，返回 `target_kind=workspace` 和整个 workspace 范围内的 `public_links` 数组。
 - CLI 会根据当前 `--server` 把 `public_links[*].download_url` 补成最终可访问的完整绝对链接。
 - 位置参数写法 `public-links ls main-agent reports/a.pdf` 与 `public-links ls main-agent --path reports/a.pdf` 等价。
+- 只有该 workspace 的 `owner` 或管理员能查看公开链接记录。
 
 示例：
 
@@ -1026,6 +1034,7 @@ drive-board [全局参数] public-links rm <link_id>
 
 - 该命令只撤销公开链接，不会删除原文件。
 - 如果 `link_id` 不存在，服务端返回 404。
+- 只有该 workspace 的 `owner` 或管理员能撤销公开链接。
 
 示例：
 

@@ -63,10 +63,17 @@ def _config(request: Request):
     return request.app.state.config
 
 
+def normalize_request_path(path: str | None) -> str:
+    try:
+        return normalize_path(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def resolve_upload_destination_path(requested_path: str, filename: str) -> str:
     raw = (requested_path or "").replace("\\", "/").strip()
     treat_as_folder = raw in {"", ".", "/"} or raw.endswith("/")
-    normalized = normalize_path(requested_path)
+    normalized = normalize_request_path(requested_path)
     if treat_as_folder:
         return f"{normalized}/{filename}" if normalized else filename
     return normalized
@@ -296,6 +303,8 @@ def create_api_router() -> APIRouter:
             name = normalize_workspace_name(payload.name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if db.get_workspace(name):
+            raise HTTPException(status_code=409, detail="workspace already exists")
         member_permissions: dict[str, str] = {}
         for member in payload.members:
             if not db.get_actor(member.actor_id):
@@ -336,7 +345,7 @@ def create_api_router() -> APIRouter:
         db = _db(request)
         workspace = workspace_or_404(db, workspace_name)
         if not db.can_write_workspace_members(actor, workspace["id"]):
-            raise HTTPException(status_code=403, detail="workspace write permission required")
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         if not db.get_actor(payload.actor_id):
             raise HTTPException(status_code=404, detail="actor not found")
         return {"member": db.set_member(workspace["id"], payload.actor_id, payload.permission)}
@@ -351,7 +360,7 @@ def create_api_router() -> APIRouter:
         db = _db(request)
         workspace = workspace_or_404(db, workspace_name)
         if not db.can_write_workspace_members(actor, workspace["id"]):
-            raise HTTPException(status_code=403, detail="workspace write permission required")
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         try:
             db.delete_member(workspace["id"], actor_id)
         except KeyError as exc:
@@ -385,7 +394,7 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
-        normalized = normalize_path(path)
+        normalized = normalize_request_path(path)
         permission = require_permission(db, actor, ws, normalized, "read")
         ensure_workspace(_config(request).storage_dir, ws["id"])
         try:
@@ -409,7 +418,7 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, payload.workspace)
-        normalized = normalize_path(payload.path)
+        normalized = normalize_request_path(payload.path)
         require_permission(db, actor, ws, parent_path(normalized), "write")
         make_folder(_config(request).storage_dir, ws["id"], normalized)
         return {"path": normalized, "kind": "folder"}
@@ -423,7 +432,7 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
-        normalized = normalize_path(path)
+        normalized = normalize_request_path(path)
         require_permission(db, actor, ws, normalized, "read")
         try:
             content = read_text(_config(request).storage_dir, ws["id"], normalized)
@@ -446,11 +455,17 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, payload.workspace)
-        normalized = normalize_path(payload.path)
+        normalized = normalize_request_path(payload.path)
         target = resolve_path(_config(request).storage_dir, ws["id"], normalized)
         check_path = normalized if target.exists() else parent_path(normalized)
         require_permission(db, actor, ws, check_path, "write")
-        write_text(_config(request).storage_dir, ws["id"], normalized, payload.content)
+        try:
+            write_text(_config(request).storage_dir, ws["id"], normalized, payload.content)
+        except IsADirectoryError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="destination path points to an existing folder",
+            ) from exc
         return {
             "workspace": payload.workspace,
             "path": normalized,
@@ -468,7 +483,7 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
-        filename = normalize_path(file.filename)
+        filename = normalize_request_path(file.filename)
         if not filename or "/" in filename:
             raise HTTPException(status_code=400, detail="invalid filename")
         destination_path = resolve_upload_destination_path(path, filename)
@@ -498,12 +513,13 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
-        normalized = normalize_path(path)
+        normalized = normalize_request_path(path)
         require_permission(db, actor, ws, normalized, "write")
         try:
             delete_path(_config(request).storage_dir, ws["id"], normalized)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="path not found") from exc
+        db.delete_item_permissions_for_path(ws["id"], normalized)
         db.delete_public_links_for_path(ws["id"], normalized)
         return {"ok": True}
 
@@ -515,8 +531,8 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, payload.workspace)
-        source = normalize_path(payload.source_path)
-        destination = normalize_path(payload.destination_path)
+        source = normalize_request_path(payload.source_path)
+        destination = normalize_request_path(payload.destination_path)
         require_permission(db, actor, ws, source, "read")
         require_permission(db, actor, ws, parent_path(destination), "write")
         try:
@@ -543,8 +559,8 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, payload.workspace)
-        source = normalize_path(payload.source_path)
-        destination = normalize_path(payload.destination_path)
+        source = normalize_request_path(payload.source_path)
+        destination = normalize_request_path(payload.destination_path)
         require_permission(db, actor, ws, source, "write")
         require_permission(db, actor, ws, parent_path(destination), "write")
         try:
@@ -573,7 +589,7 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, payload.workspace)
-        source = normalize_path(payload.path)
+        source = normalize_request_path(payload.path)
         require_permission(db, actor, ws, source, "write")
         try:
             destination = rename_path(
@@ -607,7 +623,7 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
-        normalized = normalize_path(path)
+        normalized = normalize_request_path(path)
         require_permission(db, actor, ws, normalized, "read")
         target = resolve_path(_config(request).storage_dir, ws["id"], normalized)
         if not target.exists() or target.is_dir():
@@ -627,7 +643,7 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
-        normalized = normalize_path(path)
+        normalized = normalize_request_path(path)
         require_permission(db, actor, ws, normalized, "read")
         try:
             content = read_text(_config(request).storage_dir, ws["id"], normalized)
@@ -643,7 +659,9 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, payload.workspace)
-        normalized = normalize_path(payload.path)
+        normalized = normalize_request_path(payload.path)
+        if not db.can_manage_shares(actor, ws["id"]):
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         require_permission(db, actor, ws, normalized, "write")
         if not db.get_actor(payload.actor_id):
             raise HTTPException(status_code=404, detail="actor not found")
@@ -666,6 +684,8 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
+        if not db.can_manage_shares(actor, ws["id"]):
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         require_permission(db, actor, ws, path or "", "write")
         return {"shares": db.list_item_permissions(ws["id"], path)}
 
@@ -677,7 +697,9 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, payload.workspace)
-        normalized = normalize_path(payload.path)
+        normalized = normalize_request_path(payload.path)
+        if not db.can_manage_shares(actor, ws["id"]):
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         require_permission(db, actor, ws, normalized, "write")
         if not normalized:
             raise HTTPException(status_code=400, detail="public links require a file path")
@@ -696,13 +718,15 @@ def create_api_router() -> APIRouter:
     ):
         db = _db(request)
         ws = workspace_or_404(db, workspace)
+        if not db.can_manage_shares(actor, ws["id"]):
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         if path is None:
             require_permission(db, actor, ws, "", "write")
             return {
                 "target_kind": "workspace",
                 "public_links": [public_link_payload(link) for link in db.list_public_links(ws["id"])],
             }
-        normalized = normalize_path(path)
+        normalized = normalize_request_path(path)
         require_permission(db, actor, ws, normalized, "write")
         if not normalized:
             return {"target_kind": "folder", "public_links": []}
@@ -726,6 +750,8 @@ def create_api_router() -> APIRouter:
         if not link:
             raise HTTPException(status_code=404, detail="public link not found")
         workspace = workspace_or_404(db, link["workspace_id"])
+        if not db.can_manage_shares(actor, workspace["id"]):
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         require_permission(db, actor, workspace, link["path"], "write")
         db.delete_public_link(link_id)
         return {"ok": True}
@@ -741,6 +767,8 @@ def create_api_router() -> APIRouter:
         if not share:
             raise HTTPException(status_code=404, detail="share not found")
         workspace = workspace_or_404(db, share["workspace_id"])
+        if not db.can_manage_shares(actor, workspace["id"]):
+            raise HTTPException(status_code=403, detail="workspace owner permission required")
         require_permission(db, actor, workspace, share["path"], "write")
         db.delete_item_permission(share_id)
         return {"ok": True}

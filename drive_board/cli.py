@@ -76,6 +76,10 @@ class CliState:
 
 state = CliState()
 
+ACTOR_ID_PREFIXES = ("user:", "agent:")
+WORKSPACE_MEMBER_PERMISSIONS = {"read", "write", "owner"}
+SHARE_PERMISSIONS = {"read", "write"}
+
 
 def version_callback(value: bool) -> None:
     if not value:
@@ -138,7 +142,31 @@ def response_error_detail(response: httpx.Response) -> str:
         detail = payload.get("detail", payload)
     except ValueError:
         detail = response.text
+    if isinstance(detail, list):
+        messages: list[str] = []
+        for item in detail:
+            if isinstance(item, dict):
+                location = ".".join(str(part) for part in item.get("loc", []) if part != "body")
+                message = item.get("msg") or str(item)
+                messages.append(f"{location}: {message}" if location else message)
+            else:
+                messages.append(str(item))
+        return "; ".join(messages)
+    if isinstance(detail, dict):
+        return json.dumps(detail, ensure_ascii=False)
     return str(detail)
+
+
+def validate_actor_id(actor_id: str) -> str:
+    if actor_id.startswith(ACTOR_ID_PREFIXES):
+        return actor_id
+    fail("actor_id must include prefix: user:<username> or agent:<name>")
+
+
+def validate_permission(permission: str, allowed: set[str]) -> str:
+    if permission in allowed:
+        return permission
+    fail(f"permission must be one of: {', '.join(sorted(allowed))}")
 
 
 def request(method: str, url: str, **kwargs: Any) -> Any:
@@ -327,6 +355,8 @@ def workspaces_add_member(
     permission: str = typer.Option("read", "--permission"),
 ):
     """Add or update a workspace member."""
+    actor_id = validate_actor_id(actor_id)
+    permission = validate_permission(permission, WORKSPACE_MEMBER_PERMISSIONS)
     print_output(
         request(
             "POST",
@@ -339,6 +369,7 @@ def workspaces_add_member(
 @workspaces_app.command("remove-member")
 def workspaces_remove_member(workspace: str, actor_id: str):
     """Remove a member from a workspace."""
+    actor_id = validate_actor_id(actor_id)
     print_output(request("DELETE", f"/api/workspaces/{workspace}/members/{actor_id}"))
 
 
@@ -560,6 +591,8 @@ def shares_add(
     permission: str = typer.Option("read", "--permission"),
 ):
     """Share a file or folder with a human or agent."""
+    actor_id = validate_actor_id(actor_id)
+    permission = validate_permission(permission, SHARE_PERMISSIONS)
     print_output(
         request(
             "POST",
