@@ -13,10 +13,6 @@ from .storage import normalize_path, path_is_within
 
 
 WORKSPACE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,62}$")
-DEMO_AGENT_TOKENS = {
-    "agent:main-agent": "main-agent-token",
-    "agent:cli-agent": "cli-agent-token",
-}
 
 
 def utcnow() -> str:
@@ -143,9 +139,6 @@ class Database:
             )
             self._ensure_actor_schema(connection)
             self._ensure_public_link_schema(connection)
-            count = connection.execute("SELECT COUNT(*) FROM actors").fetchone()[0]
-            if count == 0:
-                self._seed(connection)
             connection.commit()
 
     def _ensure_actor_schema(self, connection: sqlite3.Connection) -> None:
@@ -155,15 +148,6 @@ class Database:
         }
         if "agent_token" not in columns:
             connection.execute("ALTER TABLE actors ADD COLUMN agent_token TEXT")
-        for actor_id, token in DEMO_AGENT_TOKENS.items():
-            connection.execute(
-                """
-                UPDATE actors
-                SET agent_token = ?
-                WHERE actor_id = ? AND kind = 'agent' AND agent_token IS NULL AND token_hash = ?
-                """,
-                (token, actor_id, hash_token(token)),
-            )
 
     def _ensure_public_link_schema(self, connection: sqlite3.Connection) -> None:
         duplicate_rows = connection.execute(
@@ -184,37 +168,6 @@ class Database:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_public_links_workspace_path_unique
             ON public_links(workspace_id, path)
             """
-        )
-
-    def _seed(self, connection: sqlite3.Connection) -> None:
-        self.create_actor(
-            kind="user",
-            username="admin",
-            display_name="Administrator",
-            password="admin",
-            is_admin=True,
-            connection=connection,
-        )
-        self.create_actor(
-            kind="user",
-            username="huangshiyu",
-            display_name="huangshiyu",
-            password="huangshiyu",
-            connection=connection,
-        )
-        self.create_actor(
-            kind="agent",
-            actor_id="agent:main-agent",
-            display_name="Main Agent",
-            token="main-agent-token",
-            connection=connection,
-        )
-        self.create_actor(
-            kind="agent",
-            actor_id="agent:cli-agent",
-            display_name="CLI Agent",
-            token="cli-agent-token",
-            connection=connection,
         )
 
     def create_actor(

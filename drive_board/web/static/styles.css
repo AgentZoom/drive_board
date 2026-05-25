@@ -87,25 +87,6 @@ button.danger-button:hover,
   display: none !important;
 }
 
-.login-shell {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background:
-    radial-gradient(circle at top, rgba(22, 122, 107, 0.12), transparent 36%),
-    linear-gradient(180deg, #f8fbf9 0%, #eef4f2 100%);
-}
-
-.login-panel {
-  width: min(360px, 100%);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  box-shadow: var(--shadow);
-  padding: 28px;
-}
-
 .brand-row,
 .sidebar-head {
   display: flex;
@@ -131,32 +112,16 @@ button.danger-button:hover,
   border-radius: 6px;
 }
 
-.login-panel h1,
 .topbar h1 {
   margin: 0;
   line-height: 1.1;
   letter-spacing: 0;
 }
 
-.login-panel h1 {
-  font-size: 28px;
-}
-
-.login-panel p,
 .sidebar-head span {
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 14px;
-}
-
-.login-copy {
-  margin-top: 8px;
-}
-
-.login-form {
-  display: grid;
-  gap: 16px;
-  margin-top: 30px;
 }
 
 label {
@@ -1726,41 +1691,6 @@ textarea:focus {
   text-decoration: none;
 }
 
-.token-visibility-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.token-visibility-input {
-  min-width: 0;
-  width: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-}
-
-.token-visibility-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  min-width: 36px;
-  padding: 0;
-  flex: 0 0 auto;
-}
-
-.token-visibility-toggle svg {
-  width: 16px;
-  height: 16px;
-}
-
-.token-placeholder {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-}
-
 .row-meta {
   display: grid;
   gap: 4px;
@@ -1790,18 +1720,6 @@ textarea:focus {
   flex: 1 1 180px;
   border-radius: 6px;
   background: #fff;
-}
-
-.actor-admin-toggle {
-  flex: 0 0 auto;
-  min-height: 34px;
-  padding: 0 8px;
-  gap: 6px;
-  justify-content: flex-start;
-}
-
-.actor-admin-toggle span {
-  white-space: nowrap;
 }
 
 .toggle-row input {
@@ -1860,16 +1778,6 @@ dialog menu {
   border-top: 1px solid var(--border);
 }
 
-.token-box {
-  padding: 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface-alt);
-  overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-}
-
 .toast {
   position: fixed;
   right: 18px;
@@ -1922,10 +1830,6 @@ dialog menu {
 }
 
 @media (max-width: 640px) {
-  .login-panel {
-    padding: 22px;
-  }
-
   .content-grid,
   .topbar {
     padding: 12px;

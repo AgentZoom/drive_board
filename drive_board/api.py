@@ -52,7 +52,7 @@ from .storage import (
 )
 
 
-md = MarkdownIt("commonmark", {"html": True})
+md = MarkdownIt("commonmark", {"html": False})
 
 
 def _db(request: Request) -> Database:
@@ -142,6 +142,7 @@ def create_api_router() -> APIRouter:
             token,
             httponly=True,
             samesite="lax",
+            secure=_config(request).is_production,
             max_age=_config(request).session_days * 24 * 60 * 60,
         )
         return {"actor": public_actor(actor)}

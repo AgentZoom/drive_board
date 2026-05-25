@@ -5,6 +5,7 @@ const PDFJS_MODULE_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/
 const PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.mjs";
 
 let pdfJsPromise = null;
+let routeExtension = null;
 
 const state = {
   actor: null,
@@ -34,7 +35,6 @@ const state = {
 const EDITABLE_PREVIEW_TYPES = new Set(["html", "markdown", "text"]);
 const MEMBER_PERMISSIONS = ["read", "write", "owner"];
 const NAME_COLLATOR = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
-const NAV_BUTTON_IDS = ["fileListNavBtn", "sharedNavBtn", "shareManagerNavBtn", "spaceManagerNavBtn", "adminBtn", "profileNavBtn"];
 const CODE_EXTENSIONS = new Set([
   "c",
   "cc",
@@ -115,13 +115,6 @@ function renderSvgIcon(name) {
   `;
 }
 
-function syncTokenVisibilityToggle(button, input) {
-  const visible = input.type === "text";
-  button.innerHTML = renderSvgIcon(visible ? "eye-off" : "eye");
-  button.setAttribute("aria-label", visible ? "隐藏 token" : "显示 token");
-  button.title = visible ? "隐藏 token" : "显示 token";
-}
-
 async function api(path, options = {}) {
   const init = { ...options, headers: { ...(options.headers || {}) } };
   if (init.body && !(init.body instanceof FormData)) {
@@ -188,270 +181,49 @@ function normalizePageSize(value) {
   return ALLOWED_PAGE_SIZES.has(size) ? size : DEFAULT_PAGE_SIZE;
 }
 
+function ensureStylesheet(href) {
+  if (!href || document.querySelector(`link[rel="stylesheet"][href="${href}"]`)) {
+    return;
+  }
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = href;
+  document.head.append(link);
+}
+
+function extensionContext() {
+  return {
+    state,
+    api,
+    escapeHtml,
+    renderSvgIcon,
+    toast,
+    openModal,
+    syncRoute,
+    showManagerView,
+    refreshShellPreservingWorkspace,
+    bootstrap,
+  };
+}
+
+async function loadRouteExtension() {
+  if (routeExtension) {
+    return routeExtension;
+  }
+  const modulePath = document.body.dataset.extensionModule;
+  if (!modulePath) {
+    return null;
+  }
+  ensureStylesheet(document.body.dataset.extensionStyle || "");
+  const module = await import(modulePath);
+  routeExtension = module.installExtension(extensionContext());
+  return routeExtension;
+}
+
 function resolveRouteWorkspace(name) {
   if (name && state.workspaces.some((workspace) => workspace.name === name)) {
     return name;
   }
-  if (state.currentWorkspace && state.workspaces.some((workspace) => workspace.name === state.currentWorkspace)) {
-    return state.currentWorkspace;
-  }
-  return state.workspaces[0]?.name || null;
-}
-
-function buildAppUrl() {
-  const segments = [ROUTE_PREFIX];
-  const params = new URLSearchParams();
-
-  switch (state.activeView) {
-    case "shared":
-      segments.push("shared");
-      if (state.currentWorkspace) {
-        params.set("workspace", state.currentWorkspace);
-      }
-      break;
-    case "share-manager":
-      segments.push("share-manager");
-      if (state.currentWorkspace) {
-        segments.push(encodeURIComponent(state.currentWorkspace));
-      }
-      break;
-    case "workspace-members":
-      segments.push("workspace-members");
-      if (state.currentWorkspace) {
-        segments.push(encodeURIComponent(state.currentWorkspace));
-      }
-      break;
-    case "actor-admin":
-      segments.push("admin", "actors");
-      if (state.currentWorkspace) {
-        params.set("workspace", state.currentWorkspace);
-      }
-      break;
-    case "profile":
-      segments.push("profile");
-      if (state.currentWorkspace) {
-        params.set("workspace", state.currentWorkspace);
-      }
-      break;
-    case "files":
-    default: {
-      segments.push("files");
-      if (state.currentWorkspace) {
-        segments.push(encodeURIComponent(state.currentWorkspace));
-        const normalizedPath = normalizePathInput(state.currentPath);
-        if (normalizedPath) {
-          segments.push(...normalizedPath.split("/").map(encodeURIComponent));
-        }
-      }
-      if (state.fileQuery) {
-        params.set("q", state.fileQuery);
-      }
-      if (state.sortField !== "modified_at") {
-        params.set("sort", state.sortField);
-      }
-      if (state.sortDirection !== defaultSortDirection(state.sortField)) {
-        params.set("dir", state.sortDirection);
-      }
-      if (state.page !== 1) {
-        params.set("page", String(state.page));
-      }
-      if (state.pageSize !== DEFAULT_PAGE_SIZE) {
-        params.set("size", String(state.pageSize));
-      }
-      break;
-    }
-  }
-
-  const query = params.toString();
-  return `${segments.join("/")}${query ? `?${query}` : ""}`;
-}
-
-function syncRoute({ replace = false } = {}) {
-  const nextUrl = buildAppUrl();
-  const currentUrl = `${window.location.pathname}${window.location.search}`;
-  if (nextUrl === currentUrl) {
-    return;
-  }
-  window.history[replace ? "replaceState" : "pushState"](null, "", nextUrl);
-}
-
-function parseAppRoute() {
-  const url = new URL(window.location.href);
-  const segments = url.pathname.split("/").filter(Boolean).map(decodeRoutePart);
-  if (segments[0] !== ROUTE_PREFIX.slice(1)) {
-    return null;
-  }
-
-  const params = url.searchParams;
-  const route = {
-    view: "files",
-    workspace: null,
-    path: "",
-    fileQuery: "",
-    sortField: "modified_at",
-    sortDirection: "desc",
-    page: 1,
-    pageSize: DEFAULT_PAGE_SIZE,
-  };
-
-  if (segments[1] === "shared") {
-    route.view = "shared";
-    route.workspace = params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "share-manager") {
-    route.view = "share-manager";
-    route.workspace = segments[2] || params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "workspace-members") {
-    route.view = "workspace-members";
-    route.workspace = segments[2] || params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "admin" && segments[2] === "actors") {
-    route.view = "actor-admin";
-    route.workspace = params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "profile") {
-    route.view = "profile";
-    route.workspace = params.get("workspace") || null;
-    return route;
-  }
-
-  const fileSegments = segments[1] === "files" ? segments.slice(2) : [];
-  route.workspace = fileSegments[0] || params.get("workspace") || null;
-  route.path = fileSegments.length > 1 ? fileSegments.slice(1).join("/") : "";
-  route.fileQuery = params.get("q") || "";
-
-  const sortField = params.get("sort");
-  if (["name", "size", "modified_at"].includes(sortField)) {
-    route.sortField = sortField;
-  }
-  const sortDirection = params.get("dir");
-  route.sortDirection = sortDirection === "asc" || sortDirection === "desc"
-    ? sortDirection
-    : defaultSortDirection(route.sortField);
-
-  const page = Number.parseInt(params.get("page") || "1", 10);
-  route.page = Number.isInteger(page) && page > 0 ? page : 1;
-  route.pageSize = normalizePageSize(params.get("size"));
-  return route;
-}
-
-function applyFileRoutePreferences(route = null) {
-  state.fileQuery = route?.fileQuery || "";
-  state.sortField = route?.sortField || "modified_at";
-  state.sortDirection = route?.sortDirection || defaultSortDirection(state.sortField);
-  state.page = route?.page || 1;
-  state.pageSize = normalizePageSize(route?.pageSize);
-  $("fileSearchInput").value = state.fileQuery;
-  $("pageSizeSelect").value = String(state.pageSize);
-}
-
-async function restoreRouteFromLocation() {
-  const route = parseAppRoute();
-  const view = route?.view || "files";
-  const workspace = resolveRouteWorkspace(route?.workspace);
-  if (workspace) {
-    state.currentWorkspace = workspace;
-    renderWorkspaces();
-  }
-
-  if (view === "files") {
-    state.currentPath = route?.path || "";
-    applyFileRoutePreferences(route);
-    try {
-      await openFileListView({ skipRouteSync: true, preserveDetail: true });
-    } catch {
-      state.currentPath = "";
-      await openFileListView({ skipRouteSync: true, preserveDetail: true });
-    }
-    syncRoute({ replace: true });
-    return;
-  }
-
-  try {
-    switch (view) {
-      case "shared":
-        await openSharedManager({ skipRouteSync: true });
-        break;
-      case "share-manager":
-        await openShareManager({ skipRouteSync: true });
-        if (state.activeView !== "share-manager") {
-          await openFileListView({ skipRouteSync: true, preserveDetail: true });
-        }
-        break;
-      case "workspace-members":
-        await openWorkspaceMembersManager({ skipRouteSync: true });
-        if (state.activeView !== "workspace-members") {
-          await openFileListView({ skipRouteSync: true, preserveDetail: true });
-        }
-        break;
-      case "actor-admin":
-        await openActorManager({ skipRouteSync: true });
-        break;
-      case "profile":
-        await openProfileManager({ skipRouteSync: true });
-        break;
-      default:
-        await openFileListView({ skipRouteSync: true, preserveDetail: true });
-        break;
-    }
-  } catch {
-    await openFileListView({ skipRouteSync: true, preserveDetail: true });
-  }
-  syncRoute({ replace: true });
-}
-
-async function getPdfJs() {
-  if (!pdfJsPromise) {
-    pdfJsPromise = import(PDFJS_MODULE_URL).then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-      return pdfjs;
-    });
-  }
-  return pdfJsPromise;
-}
-
-async function readErrorDetail(response) {
-  let detail = response.statusText;
-  try {
-    const payload = await response.json();
-    detail = payload.detail || detail;
-  } catch {
-    const text = await response.text();
-    detail = text || detail;
-  }
-  return detail;
-}
-
-function currentUploadDestinationPath() {
-  return state.currentPath ? `${state.currentPath}/` : "";
-}
-
-async function requestFileUpload(file, { overwrite = false } = {}) {
-  const form = new FormData();
-  form.append("workspace", state.currentWorkspace);
-  form.append("path", currentUploadDestinationPath());
-  form.append("overwrite", overwrite ? "true" : "false");
-  form.append("file", file);
-
-  const response = await fetch("/api/files/upload", { method: "POST", body: form });
-  if (!response.ok) {
-    const error = new Error(await readErrorDetail(response));
-    error.status = response.status;
-    throw error;
-  }
-  return response.json();
-}
-
-function confirmOverwriteUpload(file) {
-  return new Promise((resolve) => {
-    openModal(
-      `
-        <h2>覆盖已有文件？</h2>
         <p class="modal-copy">${escapeHtml(file.name)} 已存在于当前文件夹。确认后会用新文件覆盖旧文件。</p>
       `,
       async () => {
@@ -652,6 +424,10 @@ function isFileListView() {
 }
 
 function activeNavButtonId() {
+  const extensionButtonId = routeExtension?.activeNavButtonId?.(state);
+  if (extensionButtonId) {
+    return extensionButtonId;
+  }
   switch (state.activeView) {
     case "shared":
       return "sharedNavBtn";
@@ -659,8 +435,6 @@ function activeNavButtonId() {
       return "shareManagerNavBtn";
     case "workspace-members":
       return "spaceManagerNavBtn";
-    case "actor-admin":
-      return "adminBtn";
     case "profile":
       return "profileNavBtn";
     case "files":
@@ -671,12 +445,9 @@ function activeNavButtonId() {
 
 function updateSidebarNav() {
   const activeId = activeNavButtonId();
-  for (const id of NAV_BUTTON_IDS) {
-    const button = $(id);
-    if (button) {
-      button.classList.toggle("is-active", id === activeId);
-    }
-  }
+  document.querySelectorAll(".nav-button").forEach((button) => {
+    button.classList.toggle("is-active", button.id === activeId);
+  });
 }
 
 function applyViewMode() {
@@ -705,264 +476,6 @@ function normalizeSearch(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function compareItemValues(left, right, field) {
-  if (field === "name") {
-    return NAME_COLLATOR.compare(left.name || "", right.name || "");
-  }
-  if (field === "size") {
-    return (Number(left.size) || 0) - (Number(right.size) || 0);
-  }
-  if (field === "modified_at") {
-    return (new Date(left.modified_at || 0).getTime() || 0) - (new Date(right.modified_at || 0).getTime() || 0);
-  }
-  return 0;
-}
-
-function getVisibleFileState() {
-  const query = normalizeSearch(state.fileQuery);
-  let items = [...state.currentItems];
-  if (query) {
-    items = items.filter((item) => {
-      const haystack = `${item.name || ""} ${item.path || ""} ${item.preview_type || ""}`.toLowerCase();
-      return haystack.includes(query);
-    });
-  }
-  items.sort((left, right) => {
-    const value = compareItemValues(left, right, state.sortField);
-    if (value !== 0) {
-      return state.sortDirection === "asc" ? value : -value;
-    }
-    const fallback = NAME_COLLATOR.compare(left.name || "", right.name || "");
-    return state.sortDirection === "asc" ? fallback : -fallback;
-  });
-  const totalItems = items.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / state.pageSize) || 1);
-  state.page = Math.min(Math.max(1, state.page), totalPages);
-  const start = (state.page - 1) * state.pageSize;
-  return {
-    items,
-    pageItems: items.slice(start, start + state.pageSize),
-    totalItems,
-    totalPages,
-  };
-}
-
-function renderSortHeaders() {
-  document.querySelectorAll(".sort-header").forEach((button) => {
-    const active = button.dataset.sortField === state.sortField;
-    button.classList.toggle("is-active", active);
-  });
-  document.querySelectorAll("[data-sort-indicator]").forEach((indicator) => {
-    const field = indicator.dataset.sortIndicator;
-    if (field === state.sortField) {
-      indicator.textContent = state.sortDirection === "asc" ? "↑" : "↓";
-      indicator.dataset.state = state.sortDirection;
-    } else {
-      indicator.textContent = "↕";
-      indicator.dataset.state = "idle";
-    }
-  });
-}
-
-function renderPagination(totalItems, totalPages) {
-  $("pageStatus").textContent = `当前第 ${state.page} 页 / 总 ${totalPages} 页 · 共 ${totalItems} 项`;
-  $("firstPageBtn").disabled = state.page <= 1;
-  $("prevPageBtn").disabled = state.page <= 1;
-  $("nextPageBtn").disabled = state.page >= totalPages;
-  $("lastPageBtn").disabled = state.page >= totalPages;
-}
-
-function workspaceBadgeText(workspace) {
-  if (!workspace) return "-";
-  return workspace.kind === "private" ? "private" : workspace.permission;
-}
-
-function workspaceSummaryText(workspace) {
-  if (!workspace) return "暂无可用空间";
-  const kindText = workspace.kind === "private" ? "个人 workspace" : "共享 workspace";
-  return `${kindText} · ${state.workspaces.length} 个可见空间`;
-}
-
-function sharePathLabel(path) {
-  return path || "/";
-}
-
-function groupSharesByPath(shares) {
-  const groups = new Map();
-  for (const share of shares) {
-    const key = share.path || "";
-    if (!groups.has(key)) {
-      groups.set(key, { path: key, shares: [] });
-    }
-    groups.get(key).shares.push(share);
-  }
-  return Array.from(groups.values()).sort((left, right) => sharePathLabel(left.path).localeCompare(sharePathLabel(right.path)));
-}
-
-function shareRecipientsSummary(shares) {
-  const labels = shares.map((share) => share.display_name || share.actor_id);
-  if (labels.length <= 2) return labels.join(" · ");
-  return `${labels.slice(0, 2).join(" · ")} 等 ${labels.length} 人`;
-}
-
-function canEditItem(item) {
-  return item?.kind === "file" && EDITABLE_PREVIEW_TYPES.has(item.preview_type);
-}
-
-function canManageWorkspaceMembers() {
-  return currentWorkspaceInfo()?.kind === "share_group";
-}
-
-function canUploadHere() {
-  return Boolean(state.currentWorkspace) && state.currentPermission === "write" && isFileListView();
-}
-
-function permissionOptions(options, selected) {
-  return options
-    .map((value) => `<option value="${value}"${value === selected ? " selected" : ""}>${value}</option>`)
-    .join("");
-}
-
-function actorOptions({ excludeIds = [], selectedId = null, includeSelf = false } = {}) {
-  const blocked = new Set(excludeIds.filter(Boolean));
-  return state.actors
-    .filter((actor) => {
-      if (!includeSelf && actor.actor_id === state.actor?.actor_id && actor.actor_id !== selectedId) {
-        return false;
-      }
-      return !blocked.has(actor.actor_id) || actor.actor_id === selectedId;
-    })
-    .map((actor) => `
-      <option value="${escapeHtml(actor.actor_id)}"${actor.actor_id === selectedId ? " selected" : ""}>
-        ${escapeHtml(actor.actor_id)} · ${escapeHtml(actor.display_name)}
-      </option>
-    `)
-    .join("");
-}
-
-function actorMeta(actorId) {
-  const actor = state.actors.find((item) => item.actor_id === actorId) || null;
-  if (!actor) {
-    return {
-      title: actorId,
-      subtitle: "",
-    };
-  }
-  return {
-    title: actor.actor_id,
-    subtitle: [actor.display_name, actor.kind].filter(Boolean).join(" · "),
-  };
-}
-
-function setWriteActionsEnabled(enabled) {
-  for (const id of ["uploadBtn", "folderBtn", "textBtn"]) {
-    $(id).disabled = !enabled;
-  }
-}
-
-function toggleDropOverlay(visible) {
-  const active = visible && canUploadHere() && !state.isUploading;
-  $("dropOverlay").classList.toggle("is-visible", active);
-  $("uploadDropzone").classList.toggle("is-dragover", active);
-}
-
-function syncUploadDock() {
-  const dock = $("uploadDock");
-  const dropzone = $("uploadDropzone");
-  const title = $("uploadDockTitle");
-  const hint = $("uploadDockHint");
-  const visible = canUploadHere();
-  dock.classList.toggle("hidden", !visible);
-  if (!visible) {
-    toggleDropOverlay(false);
-    return;
-  }
-  dropzone.disabled = state.isUploading;
-  dropzone.classList.toggle("is-uploading", state.isUploading);
-  title.textContent = state.isUploading ? "正在上传" : "拖拽上传";
-  hint.textContent = state.isUploading
-    ? "文件上传中，请稍候"
-    : `拖拽文件到这里，或点击选择文件，上传到 ${state.currentWorkspace}/${state.currentPath || ""}`;
-}
-
-function eventHasFiles(event) {
-  return Array.from(event.dataTransfer?.types || []).includes("Files");
-}
-
-function openHtmlPreview(workspace, path) {
-  const link = document.createElement("a");
-  link.href = previewUrl(workspace, path);
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.className = "hidden";
-  document.body.append(link);
-  link.click();
-  link.remove();
-  return true;
-}
-
-function closeAllActionMenus() {
-  document.querySelectorAll(".action-menu.is-open").forEach((menu) => {
-    menu.classList.remove("is-open");
-    const submenu = menu.querySelector(".action-submenu");
-    submenu?.classList.remove("open-upward");
-    if (submenu) {
-      submenu.style.top = "";
-      submenu.style.left = "";
-    }
-  });
-}
-
-function positionActionMenu(menu) {
-  if (!menu) return;
-  const submenu = menu.querySelector(".action-submenu");
-  if (!submenu) return;
-
-  submenu.classList.remove("open-upward");
-  submenu.style.top = "";
-  submenu.style.left = "";
-
-  const viewportPadding = 12;
-  const gap = 8;
-  const menuRect = menu.getBoundingClientRect();
-  const submenuWidth = submenu.offsetWidth;
-  const submenuHeight = submenu.offsetHeight;
-  const availableBelow = window.innerHeight - viewportPadding - menuRect.bottom - gap;
-  const availableAbove = menuRect.top - viewportPadding - gap;
-  const shouldOpenUpward = submenuHeight > availableBelow && availableAbove > availableBelow;
-
-  const top = shouldOpenUpward
-    ? Math.max(viewportPadding, menuRect.top - submenuHeight - gap)
-    : Math.min(window.innerHeight - viewportPadding - submenuHeight, menuRect.bottom + gap);
-  const left = Math.min(
-    Math.max(viewportPadding, menuRect.right - submenuWidth),
-    window.innerWidth - viewportPadding - submenuWidth,
-  );
-
-  submenu.classList.toggle("open-upward", shouldOpenUpward);
-  submenu.style.top = `${Math.round(top)}px`;
-  submenu.style.left = `${Math.round(left)}px`;
-}
-
-function toggleActionMenu(menu) {
-  if (!menu) return;
-  const shouldOpen = !menu.classList.contains("is-open");
-  closeAllActionMenus();
-  menu.classList.toggle("is-open", shouldOpen);
-  if (shouldOpen) {
-    positionActionMenu(menu);
-  }
-}
-
-function runPreviewCleanup() {
-  if (typeof state.previewCleanup === "function") {
-    try {
-      state.previewCleanup();
-    } catch {
-      // Cleanup should not block future previews.
-    }
-  }
-  state.previewCleanup = null;
 }
 
 function resetPreviewDialog() {
@@ -1292,14 +805,10 @@ function resetTransientViewState() {
 }
 
 function showLogin() {
-  resetTransientViewState();
-  $("loginView").classList.remove("hidden");
-  $("appView").classList.add("hidden");
+  window.location.replace("/");
 }
 
 function showApp() {
-  $("loginView").classList.add("hidden");
-  $("appView").classList.remove("hidden");
 }
 
 async function bootstrap() {
@@ -1307,6 +816,7 @@ async function bootstrap() {
     const session = await api("/api/session");
     if (session.actor) {
       state.actor = session.actor;
+      await loadRouteExtension();
       await loadShell({ skipContentLoad: true });
       showApp();
       await restoreRouteFromLocation();
@@ -1334,7 +844,6 @@ async function loadShell({ skipContentLoad = false } = {}) {
     closeDetail();
   }
   $("actorLabel").textContent = state.actor.display_name || state.actor.actor_id;
-  $("adminBtn").classList.toggle("hidden", !state.actor.is_admin);
   renderWorkspaces();
   renderShared();
   if (!state.currentWorkspace && state.workspaces.length) {
@@ -1432,264 +941,6 @@ async function loadFiles({ preserveDetail = false, preservePage = false } = {}) 
     path: state.currentPath || "",
   });
   const payload = await api(`/api/files?${params.toString()}`);
-  state.currentPermission = payload.permission;
-  state.currentItems = payload.items;
-  if (!preservePage) {
-    state.page = 1;
-  }
-  setWriteActionsEnabled(payload.permission === "write");
-  renderFileList(payload.path || "");
-  if (!preserveDetail) {
-    closeDetail();
-  }
-}
-
-function renderFileList(path = state.currentPath || "") {
-  renderBreadcrumb(path);
-  renderRows(state.currentItems);
-  renderSortHeaders();
-  syncUploadDock();
-}
-
-function renderBreadcrumb(path) {
-  const rootButton = `<button data-path="">${escapeHtml(state.currentWorkspace)}</button>`;
-  const parts = path ? path.split("/") : [];
-  const crumbs = [rootButton];
-  let cursor = "";
-  for (const part of parts) {
-    cursor = cursor ? `${cursor}/${part}` : part;
-    crumbs.push(`<span>/</span><button data-path="${escapeHtml(cursor)}">${escapeHtml(part)}</button>`);
-  }
-  $("breadcrumb").innerHTML = crumbs.join("");
-  $("breadcrumb").querySelectorAll("button").forEach((button) => {
-    button.addEventListener("click", () => selectWorkspace(state.currentWorkspace, button.dataset.path));
-  });
-}
-
-function renderActionPill(action, label, icon, variant, disabled = false) {
-  return `
-    <button
-      data-action="${action}"
-      class="action-pill-button ${variant}"
-      title="${escapeHtml(label)}"
-      aria-label="${escapeHtml(label)}"
-      ${disabled ? " disabled" : ""}
-    >
-      <span class="action-pill-icon" aria-hidden="true">${renderSvgIcon(icon)}</span>
-      <span>${escapeHtml(label)}</span>
-    </button>
-  `;
-}
-
-function renderActionIcon(action, label, icon, variant, disabled = false) {
-  return `
-    <button
-      data-action="${action}"
-      class="action-icon-button ${variant}"
-      title="${escapeHtml(label)}"
-      aria-label="${escapeHtml(label)}"
-      ${disabled ? " disabled" : ""}
-    >
-      <span aria-hidden="true">${renderSvgIcon(icon)}</span>
-    </button>
-  `;
-}
-
-function renderModifyMenu() {
-  return `
-    <div class="action-menu">
-      ${renderActionPill("toggle-modify", "修改", "modify", "action-neutral action-pill-compact")}
-      <div class="action-submenu">
-        <button type="button" data-action="rename">重命名</button>
-        <button type="button" data-action="move">移动</button>
-        <button type="button" data-action="copy">复制</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderRows(items) {
-  const rows = $("fileRows");
-  rows.innerHTML = "";
-  const { pageItems, totalItems, totalPages } = getVisibleFileState();
-  if (state.currentPath) {
-    const parent = state.currentPath.split("/").slice(0, -1).join("/");
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td><div class="file-name">${fileIconMarkup({ kind: "folder", preview_type: "folder" })}<button>..</button></div></td>
-      <td></td><td></td><td></td>
-    `;
-    row.querySelector("button").addEventListener("click", () => selectWorkspace(state.currentWorkspace, parent));
-    rows.append(row);
-  }
-  if (!pageItems.length) {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="4" class="empty-table-row">${totalItems ? "当前页没有内容。" : "没有匹配的文件或文件夹。"}</td>`;
-    rows.append(row);
-    renderPagination(totalItems, totalPages);
-    return;
-  }
-  for (const item of pageItems) {
-    const row = document.createElement("tr");
-    const nameCell = item.kind === "folder"
-      ? `<button title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</button>`
-      : `<span class="file-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>`;
-    const actions = [];
-    if (item.kind === "file") {
-      actions.push(renderActionIcon("preview", "预览", "preview", "action-neutral"));
-      if (canEditItem(item)) {
-        actions.push(renderActionIcon("edit", "编辑", "edit", "action-edit", state.currentPermission !== "write"));
-      }
-      actions.push(renderActionIcon("download", "下载", "download", "action-download"));
-    }
-    if (state.currentPermission === "write") {
-      actions.push(renderModifyMenu());
-    }
-    actions.push(renderActionPill("share", "分享", "share", "action-share", state.currentPermission !== "write"));
-    if (state.currentPermission === "write") {
-      actions.push(renderActionIcon("delete", "删除", "delete", "action-delete"));
-    }
-    row.innerHTML = `
-      <td>
-        <div class="file-name">
-          ${fileIconMarkup(item)}
-          ${nameCell}
-        </div>
-      </td>
-      <td>${formatSize(item.size)}</td>
-      <td>${formatDate(item.modified_at)}</td>
-      <td>
-        <span class="row-actions">
-          ${actions.join("")}
-        </span>
-      </td>
-    `;
-    row.querySelector(".file-name button")?.addEventListener("click", () => {
-      selectWorkspace(state.currentWorkspace, item.path);
-    });
-    row.querySelector('[data-action="preview"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      previewItem(item);
-    });
-    row.querySelector('[data-action="edit"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      editItem(item);
-    });
-    row.querySelector('[data-action="download"]')?.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      try {
-        await downloadItem(item);
-      } catch (error) {
-        toast(error.message);
-      }
-    });
-    const modifyMenu = row.querySelector(".action-menu");
-    row.querySelector('[data-action="toggle-modify"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      toggleActionMenu(modifyMenu);
-    });
-    modifyMenu?.querySelector('[data-action="rename"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      closeAllActionMenus();
-      openRenameModal(item);
-    });
-    modifyMenu?.querySelector('[data-action="move"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      closeAllActionMenus();
-      openMoveModal(item);
-    });
-    modifyMenu?.querySelector('[data-action="copy"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      closeAllActionMenus();
-      openCopyModal(item);
-    });
-    row.querySelector('[data-action="share"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      state.currentItem = item;
-      openShareModal(item.path);
-    });
-    row.querySelector('[data-action="delete"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      confirmDelete(item);
-    });
-    rows.append(row);
-  }
-  renderPagination(totalItems, totalPages);
-}
-
-function closeDetail() {
-  if (isPreviewOpen()) {
-    $("previewModal").close();
-    return;
-  }
-  resetPreviewDialog();
-}
-
-function openDetailShell(modeLabel, title, options = {}) {
-  closeManager();
-  closeAllActionMenus();
-  runPreviewCleanup();
-  $("contentGrid").classList.remove("detail-open");
-  $("detailPane").classList.add("hidden");
-  $("detailModeLabel").textContent = modeLabel;
-  $("previewTitle").textContent = title;
-  $("previewBody").className = "preview-body preview-modal-body";
-  $("previewBody").innerHTML = "";
-  $("saveTextBtn").classList.add("hidden");
-  if (options.externalHref) {
-    $("previewOpenBtn").classList.remove("hidden");
-    $("previewOpenBtn").onclick = () => {
-      const link = document.createElement("a");
-      link.href = options.externalHref;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.className = "hidden";
-      document.body.append(link);
-      link.click();
-      link.remove();
-    };
-  } else {
-    $("previewOpenBtn").classList.add("hidden");
-    $("previewOpenBtn").onclick = null;
-  }
-  if (!isPreviewOpen()) {
-    $("previewModal").showModal();
-  }
-}
-
-async function previewItem(item) {
-  await previewItemForWorkspace(state.currentWorkspace, item);
-}
-
-async function previewItemForWorkspace(workspace, item) {
-  state.currentItem = item;
-  state.editorPath = null;
-  const src = previewUrl(workspace, item.path);
-  if (item.preview_type === "html") {
-    runPreviewCleanup();
-    if (isPreviewOpen()) {
-      $("previewModal").close();
-    }
-    openHtmlPreview(workspace, item.path);
-    return;
-  }
-  openDetailShell("预览", item.path, { externalHref: src });
-  if (item.preview_type === "image") {
-    $("previewBody").innerHTML = `<img src="${src}" alt="${escapeHtml(item.name)}" />`;
-    return;
-  }
-  if (item.preview_type === "video") {
-    $("previewBody").innerHTML = `<video src="${src}" controls></video>`;
-    return;
-  }
-  if (item.preview_type === "audio") {
-    $("previewBody").innerHTML = `
-      <section class="audio-preview-shell">
-        <section class="audio-player-panel">
-          <audio id="audioPlayer" class="audio-native-element" src="${src}" preload="metadata"></audio>
-          <button id="audioPlayBtn" class="audio-play-button" type="button" aria-label="播放">
-            ${renderSvgIcon("play")}
-          </button>
           <div class="audio-progress-shell">
             <div class="audio-progress-meta">
               <span class="audio-time-pair">
@@ -2220,10 +1471,10 @@ async function refreshCurrentManager() {
     await openSharedManager();
   } else if (state.managerMode === "workspace-members") {
     await openWorkspaceMembersManager();
-  } else if (state.managerMode === "actor-admin") {
-    await openActorManager();
   } else if (state.managerMode === "profile") {
     await openProfileManager();
+  } else if (routeExtension && await routeExtension.refreshManager?.(state.managerMode)) {
+    return;
   }
 }
 
@@ -2317,264 +1568,6 @@ async function openShareManager({ skipRouteSync = false, replaceRoute = false } 
                       </div>
                     </td>
                     <td>${escapeHtml(shareRecipientsSummary(group.shares))}</td>
-                    <td>${escapeHtml(Array.from(new Set(group.shares.map((share) => share.permission))).join(" / "))}</td>
-                    <td>
-                      <div class="manager-actions">
-                        <button type="button" data-action="open-share-modal" data-path="${escapeHtml(group.path)}">管理这个路径</button>
-                      </div>
-                    </td>
-                  </tr>
-                `)
-                .join("")}
-            </tbody>
-          </table>
-        ` : `<div class="empty-panel">这个 workspace 里还没有任何分享记录。</div>`}
-      </section>
-    </div>
-  `;
-
-  body.querySelectorAll('[data-action="open-share-modal"]').forEach((button) => {
-    button.addEventListener("click", async () => {
-      await openShareModal(button.dataset.path || "");
-    });
-  });
-
-  bindPublicLinkActions(body, {
-    workspace: state.currentWorkspace,
-    path: state.currentPath || "",
-    refresh: async () => {
-      await refreshCurrentManager();
-    },
-  });
-  if (!skipRouteSync) {
-    syncRoute({ replace: replaceRoute });
-  }
-}
-
-function confirmDelete(item) {
-  openModal(
-    `<h2>删除</h2><p>确认删除 ${escapeHtml(item.path)}？</p>`,
-    async () => {
-      const params = new URLSearchParams({ workspace: state.currentWorkspace, path: item.path });
-      await api(`/api/files?${params.toString()}`, { method: "DELETE" });
-      toast("已删除");
-      await loadFiles();
-    },
-    { confirmLabel: "删除", confirmVariant: "danger" },
-  );
-}
-
-function canBrowseIntoFolder(item, folderPath) {
-  return item.kind !== "folder" || !isDescendantOrSamePath(item.path, folderPath);
-}
-
-async function openTransferModal(item, mode) {
-  const kindLabel = item.kind === "folder" ? "文件夹" : "文件";
-  const confirmLabel = mode === "copy" ? "复制" : "移动";
-  const destinationName = mode === "copy" ? leafName(suggestCopyPath(item)) : item.name;
-  const endpoint = mode === "copy" ? "/api/files/copy" : "/api/files/move";
-  let targetFolder = state.currentPath || "";
-
-  openModal(
-    `
-      <h2>${confirmLabel}${escapeHtml(item.name)}</h2>
-      <p class="modal-copy">默认目标目录就是当前文件夹。点击下面的文件夹可以继续进入更深的目标位置。</p>
-      <div class="folder-picker-shell">
-        <div class="folder-picker-current">当前目标目录：<strong id="folderPickerCurrent"></strong></div>
-        <div id="folderPickerBreadcrumb" class="folder-picker-breadcrumb"></div>
-        <div id="folderPickerList" class="folder-picker-list"></div>
-      </div>
-      <label>
-        <span>${mode === "copy" ? "复制后名称" : "目标名称"}</span>
-        <input name="destination_name" required value="${escapeHtml(destinationName)}" />
-      </label>
-    `,
-    async (form) => {
-      const destinationPath = buildDestinationPath(targetFolder, form.get("destination_name"));
-      try {
-        await api(endpoint, {
-          method: "POST",
-          body: {
-            workspace: state.currentWorkspace,
-            source_path: item.path,
-            destination_path: destinationPath,
-          },
-        });
-      } catch (error) {
-        if (error.message === "Not Found") {
-          throw new Error("当前后端还没加载最新文件操作接口，请重启服务后再试");
-        }
-        throw error;
-      }
-      closeDetail();
-      toast(`${kindLabel}已${mode === "copy" ? "复制" : "移动"}`);
-      await loadFiles();
-    },
-    {
-      confirmLabel,
-      onReady: ({ body }) => {
-        const breadcrumb = body.querySelector("#folderPickerBreadcrumb");
-        const list = body.querySelector("#folderPickerList");
-        const current = body.querySelector("#folderPickerCurrent");
-        const nameInput = body.querySelector('[name="destination_name"]');
-        const confirmButton = $("modalConfirm");
-
-        const updateConfirmState = () => {
-          try {
-            const nextPath = buildDestinationPath(targetFolder, nameInput.value);
-            confirmButton.disabled = normalizePathInput(nextPath) === normalizePathInput(item.path);
-          } catch {
-            confirmButton.disabled = true;
-          }
-        };
-
-        const renderFolderPicker = async () => {
-          current.textContent = `${state.currentWorkspace}/${targetFolder || ""}`;
-          breadcrumb.innerHTML = folderBreadcrumbMarkup(targetFolder);
-          breadcrumb.querySelectorAll("button").forEach((button) => {
-            button.addEventListener("click", async () => {
-              targetFolder = button.dataset.folderPath || "";
-              await renderFolderPicker();
-            });
-          });
-
-          const params = new URLSearchParams({ workspace: state.currentWorkspace, path: targetFolder });
-          const payload = await api(`/api/files?${params.toString()}`);
-          const folders = payload.items
-            .filter((entry) => entry.kind === "folder")
-            .filter((entry) => canBrowseIntoFolder(item, entry.path));
-
-          const cards = [];
-          if (targetFolder) {
-            cards.push(`
-              <button type="button" class="folder-picker-item folder-picker-up" data-folder-path="${escapeHtml(parentFolderPath(targetFolder))}">
-                <strong>..</strong>
-                <small>返回上一级</small>
-              </button>
-            `);
-          }
-          cards.push(
-            ...folders.map((entry) => `
-              <button type="button" class="folder-picker-item" data-folder-path="${escapeHtml(entry.path)}">
-                <strong>${escapeHtml(entry.name)}</strong>
-                <small>${escapeHtml(entry.path)}</small>
-              </button>
-            `),
-          );
-
-          list.innerHTML = cards.length ? cards.join("") : '<div class="empty-panel">当前目录没有可进入的子文件夹。</div>';
-          list.querySelectorAll("button").forEach((button) => {
-            button.addEventListener("click", async () => {
-              targetFolder = button.dataset.folderPath || "";
-              await renderFolderPicker();
-            });
-          });
-          updateConfirmState();
-        };
-
-        nameInput.addEventListener("input", updateConfirmState);
-        renderFolderPicker().catch((error) => {
-          list.innerHTML = `<div class="empty-panel">${escapeHtml(error.message)}</div>`;
-          confirmButton.disabled = true;
-        });
-      },
-    },
-  );
-}
-
-function openRenameModal(item) {
-  const kindLabel = item.kind === "folder" ? "文件夹" : "文件";
-  openModal(
-    `
-      <h2>重命名</h2>
-      <p class="modal-copy">当前路径：${escapeHtml(item.path)}</p>
-      <label>
-        <span>新名称</span>
-        <input name="new_name" required value="${escapeHtml(item.name)}" />
-      </label>
-    `,
-    async (form) => {
-      try {
-        await api("/api/files/rename", {
-          method: "POST",
-          body: {
-            workspace: state.currentWorkspace,
-            path: item.path,
-            new_name: String(form.get("new_name") || "").trim(),
-          },
-        });
-      } catch (error) {
-        if (error.message === "Not Found") {
-          throw new Error("当前后端还没加载最新重命名接口，请重启服务后再试");
-        }
-        throw error;
-      }
-      closeDetail();
-      toast(`${kindLabel}已重命名`);
-      await loadFiles();
-    },
-    {
-      confirmLabel: "重命名",
-      onReady: ({ body }) => {
-        body.querySelector('[name="new_name"]')?.select();
-      },
-    },
-  );
-}
-
-function openMoveModal(item) {
-  openTransferModal(item, "move");
-}
-
-function openCopyModal(item) {
-  openTransferModal(item, "copy");
-}
-
-function openNewGroupModal() {
-  const creatorId = state.actor?.actor_id || "";
-  openModal(
-    `
-      <h2>新建共享空间</h2>
-      <label>
-        <span>名称</span>
-        <input name="name" required placeholder="research-team" />
-      </label>
-      <section class="manager-section compact workspace-create-section">
-        <div class="section-head compact">
-          <div>
-            <h2>空间成员</h2>
-            <p>创建者默认保留 owner 权限。确认后会直接进入新建的共享空间。</p>
-          </div>
-          <button id="addWorkspaceMemberBtn" type="button" class="secondary">添加成员</button>
-        </div>
-        <table class="manager-table compact workspace-create-members-table">
-          <thead>
-            <tr>
-              <th>成员</th>
-              <th>权限</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="workspaceCreateMemberRows"></tbody>
-        </table>
-        <p id="workspaceCreateMemberHint" class="field-hint"></p>
-      </section>
-    `,
-    async (form) => {
-      const rows = Array.from(document.querySelectorAll('[data-role="workspace-member-row"]'));
-      const members = rows
-        .map((row) => ({
-          actor_id: String(row.querySelector('[data-role="workspace-member-actor"]')?.value || "").trim(),
-          permission: String(row.querySelector('[data-role="workspace-member-permission"]')?.value || "read"),
-        }))
-        .filter((member) => member.actor_id);
-      const created = await api("/api/workspaces", {
-        method: "POST",
-        body: {
-          name: String(form.get("name") || "").trim(),
-          kind: "share_group",
-          members,
-        },
       });
       await loadShell({ skipContentLoad: true });
       toast("共享空间已创建");
@@ -2933,264 +1926,6 @@ async function openWorkspaceMembersManager({ skipRouteSync = false, replaceRoute
     button.addEventListener("click", () => {
       const row = button.closest("tr");
       openModal(
-        `<h2>移除成员</h2><p>确认将 ${escapeHtml(row.dataset.actorId)} 移出 ${escapeHtml(state.currentWorkspace)}？</p>`,
-        async () => {
-          await api(`/api/workspaces/${encodeURIComponent(state.currentWorkspace)}/members/${encodeURIComponent(row.dataset.actorId)}`, {
-            method: "DELETE",
-          });
-          toast("成员已移除");
-          await refreshShellPreservingWorkspace();
-          await refreshCurrentManager();
-        },
-      );
-    });
-  });
-
-  if (canDeleteWorkspace) {
-    $("deleteWorkspaceBtn").addEventListener("click", () => {
-      const workspaceName = state.currentWorkspace;
-      openModal(
-        `<h2>删除共享空间</h2><p>确认删除 ${escapeHtml(workspaceName)}？空间成员、文件、分享记录和公开链接都会一起删除。</p>`,
-        async () => {
-          await api(`/api/workspaces/${encodeURIComponent(workspaceName)}`, {
-            method: "DELETE",
-          });
-          await loadShell({ skipContentLoad: true });
-          toast("共享空间已删除");
-          await openFileListView({ replaceRoute: true });
-        },
-        { confirmLabel: "删除", confirmVariant: "danger" },
-      );
-    });
-  }
-  if (!skipRouteSync) {
-    syncRoute({ replace: replaceRoute });
-  }
-}
-
-async function openActorManager({ skipRouteSync = false, replaceRoute = false } = {}) {
-  state.activeView = "actor-admin";
-  state.managerMode = "actor-admin";
-  state.managerContext = {};
-  showManagerView();
-  const payload = await api("/api/actors?include_inactive=true");
-  $("managerBody").innerHTML = `
-    <div class="manager-stack">
-      <section class="manager-section">
-        <div class="section-head">
-          <div>
-            <h2>用户管理</h2>
-          </div>
-          <button id="createActorBtn" type="button">创建成员</button>
-        </div>
-      </section>
-
-      <section class="manager-section">
-        <div class="section-head">
-          <div>
-            <h2>现有成员</h2>
-            <p>支持更新显示名称、管理员状态、启用状态和彻底删除；用户可直接设置新密码，Agent token 支持隐藏和显示查看。</p>
-          </div>
-        </div>
-        ${payload.actors.length ? `
-          <table class="manager-table">
-            <thead>
-              <tr>
-                <th>成员</th>
-                <th>显示名称</th>
-                <th>权限状态</th>
-                <th>凭证</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${payload.actors
-                .map((actor) => `
-                  <tr data-actor-id="${escapeHtml(actor.actor_id)}" data-kind="${escapeHtml(actor.kind)}">
-                    <td>
-                      <div class="row-meta">
-                        <strong>${escapeHtml(actor.actor_id)}</strong>
-                      </div>
-                    </td>
-                    <td><input name="display_name" value="${escapeHtml(actor.display_name)}" /></td>
-                    <td>
-                      <div class="manager-inline-status actor-status-row">
-                        <label class="toggle-row actor-admin-toggle">
-                          <span>管理员</span>
-                          <input name="is_admin" type="checkbox"${actor.is_admin ? " checked" : ""} />
-                        </label>
-                        <span class="status-pill${actor.is_active ? "" : " inactive"}">${actor.is_active ? "active" : "inactive"}</span>
-                      </div>
-                    </td>
-                    <td>
-                      ${actor.kind === "user"
-                        ? `
-                          <input
-                            name="password"
-                            type="password"
-                            placeholder="输入新密码以更新"
-                            autocomplete="new-password"
-                          />
-                        `
-                        : `
-                          <div class="token-visibility-field">
-                            <input
-                              class="token-visibility-input"
-                              name="token"
-                              type="password"
-                              value="${escapeHtml(actor.token || "")}"
-                              data-original-token="${escapeHtml(actor.token || "")}"
-                              placeholder="${escapeHtml(actor.token ? "" : "当前 token 不可恢复，可直接填入新 token")}"
-                              spellcheck="false"
-                              autocomplete="off"
-                            />
-                            <button type="button" data-action="toggle-token-visibility" class="token-visibility-toggle secondary" aria-label="显示 token" title="显示 token">
-                              ${renderSvgIcon("eye")}
-                            </button>
-                          </div>
-                        `}
-                    </td>
-                    <td>
-                      <div class="manager-actions actor-row-actions">
-                        <button type="button" data-action="save-actor">保存</button>
-                        <button type="button" data-action="toggle-actor" class="secondary">${actor.is_active ? "停用" : "启用"}</button>
-                        <button type="button" data-action="delete-actor" class="danger-button">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                `)
-                .join("")}
-            </tbody>
-          </table>
-        ` : `<div class="empty-panel">暂无成员数据。</div>`}
-      </section>
-    </div>
-  `;
-
-  $("createActorBtn").addEventListener("click", () => {
-    openModal(
-      `
-        <h2>创建成员</h2>
-        <label>
-          <span>类型</span>
-          <select name="kind">
-            <option value="user">人类用户</option>
-            <option value="agent">Agent</option>
-          </select>
-        </label>
-        <label>
-          <span>账号或 Agent 名称</span>
-          <input name="name" required />
-        </label>
-        <label>
-          <span>显示名称</span>
-          <input name="display_name" required />
-        </label>
-        <label id="createPasswordField">
-          <span>密码</span>
-          <input name="password" type="password" />
-        </label>
-        <label id="createTokenField" class="hidden">
-          <span>Agent Token</span>
-          <input name="token" />
-        </label>
-        <label class="toggle-row">
-          <span>管理员</span>
-          <input name="is_admin" type="checkbox" />
-        </label>
-      `,
-      async (form) => {
-        const kind = form.get("kind");
-        const name = String(form.get("name") || "").trim();
-        const displayName = String(form.get("display_name") || "").trim();
-        const body = {
-          kind,
-          display_name: displayName,
-          is_admin: form.get("is_admin") === "on",
-        };
-        if (kind === "user") {
-          body.username = name;
-          body.password = String(form.get("password") || "");
-        } else {
-          body.actor_id = name.startsWith("agent:") ? name : `agent:${name}`;
-          const token = String(form.get("token") || "").trim();
-          if (token) body.token = token;
-        }
-        const created = await api("/api/actors", { method: "POST", body });
-        toast("成员已创建");
-        await refreshShellPreservingWorkspace({ reloadFiles: false });
-        await refreshCurrentManager();
-        if (created.token) {
-          openModal(`<h2>Agent Token</h2><div class="token-box">${escapeHtml(created.token)}</div>`, async () => {}, {
-            confirmLabel: "关闭",
-            cancelLabel: "关闭",
-          });
-        }
-      },
-      {
-        confirmLabel: "创建成员",
-        onReady: ({ body }) => {
-          const toggleCreateFields = () => {
-            const kind = body.querySelector('[name="kind"]').value;
-            body.querySelector('#createPasswordField').classList.toggle('hidden', kind !== 'user');
-            body.querySelector('#createTokenField').classList.toggle('hidden', kind !== 'agent');
-          };
-          toggleCreateFields();
-          body.querySelector('[name="kind"]').addEventListener('change', toggleCreateFields);
-        },
-      },
-    );
-  });
-
-  $("managerBody").querySelectorAll('[data-action="toggle-token-visibility"]').forEach((button) => {
-    const input = button.closest(".token-visibility-field")?.querySelector('[name="token"]');
-    if (!input) return;
-    syncTokenVisibilityToggle(button, input);
-    button.addEventListener("click", () => {
-      input.type = input.type === "password" ? "text" : "password";
-      syncTokenVisibilityToggle(button, input);
-    });
-  });
-
-  $("managerBody").querySelectorAll('[data-action="save-actor"]').forEach((button) => {
-    button.addEventListener("click", async () => {
-      const row = button.closest("tr");
-      const body = {
-        display_name: row.querySelector('[name="display_name"]').value.trim(),
-        is_admin: row.querySelector('[name="is_admin"]').checked,
-      };
-      if (row.dataset.kind === "user") {
-        const passwordField = row.querySelector('[name="password"]');
-        const nextPassword = passwordField.value.trim();
-        if (nextPassword) {
-          body.password = nextPassword;
-        }
-      } else {
-        const tokenField = row.querySelector('[name="token"]');
-        const nextToken = tokenField.value.trim();
-        const originalToken = tokenField.dataset.originalToken || "";
-        if (nextToken && nextToken !== originalToken) {
-          body.token = nextToken;
-        }
-      }
-      await api(`/api/actors/${encodeURIComponent(row.dataset.actorId)}`, {
-        method: "PATCH",
-        body,
-      });
-      toast("成员已更新");
-      await refreshShellPreservingWorkspace({ reloadFiles: false });
-      await refreshCurrentManager();
-    });
-  });
-
-  $("managerBody").querySelectorAll('[data-action="toggle-actor"]').forEach((button) => {
-    button.addEventListener("click", async () => {
-      const row = button.closest("tr");
-      const shouldEnable = button.textContent.trim() === "启用";
-      await api(`/api/actors/${encodeURIComponent(row.dataset.actorId)}`, {
-        method: "PATCH",
-        body: { is_active: shouldEnable },
-      });
       toast(shouldEnable ? "成员已启用" : "成员已停用");
       await refreshShellPreservingWorkspace({ reloadFiles: false });
       await refreshCurrentManager();
@@ -3298,23 +2033,6 @@ function bindEvents() {
   const workspaceSearchInput = $("workspaceSearchInput");
 
   $("previewModal").addEventListener("close", resetPreviewDialog);
-  $("loginForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    $("loginError").textContent = "";
-    const form = new FormData(event.currentTarget);
-    try {
-      const payload = await api("/api/login", {
-        method: "POST",
-        body: { username: form.get("username"), password: form.get("password") },
-      });
-      state.actor = payload.actor;
-      await loadShell({ skipContentLoad: true });
-      showApp();
-      await restoreRouteFromLocation();
-    } catch (error) {
-      $("loginError").textContent = error.message;
-    }
-  });
   $("logoutBtn").addEventListener("click", async () => {
     await api("/api/logout", { method: "POST" });
     showLogin();
@@ -3326,7 +2044,6 @@ function bindEvents() {
   $("sharedNavBtn").addEventListener("click", openSharedManager);
   $("shareManagerNavBtn").addEventListener("click", openShareManager);
   $("spaceManagerNavBtn").addEventListener("click", openWorkspaceMembersManager);
-  $("adminBtn").addEventListener("click", openActorManager);
   $("profileNavBtn").addEventListener("click", openProfileManager);
   $("saveTextBtn").addEventListener("click", saveEditor);
   $("closeDetailBtn").addEventListener("click", closeDetail);

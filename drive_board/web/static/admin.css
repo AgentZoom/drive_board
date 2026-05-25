@@ -1,0 +1,50 @@
+.token-visibility-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.token-visibility-input {
+  min-width: 0;
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.token-visibility-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.token-visibility-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.actor-admin-toggle {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 8px;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.actor-admin-toggle span {
+  white-space: nowrap;
+}
+
+.token-box {
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}

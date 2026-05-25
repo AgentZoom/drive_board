@@ -14,6 +14,11 @@ class AppConfig:
     db_path: Path
     storage_dir: Path
     session_days: int = 14
+    environment: str = "development"
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() == "production"
 
 
 def get_config(data_dir: str | os.PathLike[str] | None = None) -> AppConfig:
@@ -22,4 +27,5 @@ def get_config(data_dir: str | os.PathLike[str] | None = None) -> AppConfig:
         data_dir=base,
         db_path=base / "drive_board.sqlite3",
         storage_dir=base / "storage",
+        environment=os.environ.get("DRIVE_BOARD_ENV", "development"),
     )

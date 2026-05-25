@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Online Drive</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/login.css" />
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-panel">
+        <h1>登录</h1>
+        <p class="login-copy">请输入账号和密码。</p>
+        <form id="loginForm" class="login-form">
+          <label>
+            <span>账号</span>
+            <input name="username" autocomplete="username" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">登录</button>
+          <div id="loginError" class="form-error"></div>
+        </form>
+      </section>
+    </main>
+    <script src="/static/login.js" type="module"></script>
+  </body>
+</html>

@@ -8,16 +8,49 @@ from drive_board.main import create_app
 
 
 def make_client(tmp_path):
-    return TestClient(create_app(str(tmp_path)))
+    app = create_app(str(tmp_path))
+    seed_test_identities(app)
+    return TestClient(app)
 
 
-def login(client: TestClient, username: str = "huangshiyu", password: str = "huangshiyu"):
+def seed_test_identities(app):
+    db = app.state.db
+    if db.get_actor("user:admin"):
+        return
+    db.create_actor(
+        kind="user",
+        username="admin",
+        display_name="Administrator",
+        password="admin-password",
+        is_admin=True,
+    )
+    db.create_actor(
+        kind="user",
+        username="huangshiyu",
+        display_name="huangshiyu",
+        password="user-password",
+    )
+    db.create_actor(
+        kind="agent",
+        actor_id="agent:main-agent",
+        display_name="Main Agent",
+        token="test-main-agent-token",
+    )
+    db.create_actor(
+        kind="agent",
+        actor_id="agent:cli-agent",
+        display_name="CLI Agent",
+        token="test-cli-agent-token",
+    )
+
+
+def login(client: TestClient, username: str = "huangshiyu", password: str = "user-password"):
     response = client.post("/api/login", json={"username": username, "password": password})
     assert response.status_code == 200, response.text
     return response
 
 
-def agent_headers(token: str = "main-agent-token"):
+def agent_headers(token: str = "test-main-agent-token"):
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -34,13 +67,115 @@ def test_login_and_token_identity(tmp_path):
     assert agent.json()["actor"]["actor_id"] == "agent:main-agent"
 
 
-def test_app_routes_return_spa_shell(tmp_path):
+def test_app_routes_require_auth_shell_and_hide_private_assets(tmp_path):
     client = make_client(tmp_path)
+    anonymous = TestClient(create_app(str(tmp_path)))
 
+    login_page = anonymous.get("/")
+    assert login_page.status_code == 200
+    assert "请输入账号和密码" in login_page.text
+
+    assert anonymous.get("/assets/app.js").status_code == 401
+    assert anonymous.get("/assets/app.css").status_code == 401
+    assert anonymous.get("/assets/admin.js").status_code == 401
+
+    login(client)
     for path in ["/app/files/huangshiyu/notes", "/app/share-manager/huangshiyu"]:
         response = client.get(path)
         assert response.status_code == 200
         assert "Online Drive" in response.text
+        assert "/assets/app.js" in response.text
+        assert "/app/admin/actors" not in response.text
+
+
+def test_non_admin_cannot_access_admin_route_or_assets(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    assert client.get("/app/admin/actors").status_code == 403
+    assert client.get("/assets/admin.js").status_code == 403
+    assert client.get("/assets/admin.css").status_code == 403
+
+
+def test_admin_route_loads_extension_assets_only_for_admin(tmp_path):
+    client = make_client(tmp_path)
+    login(client, "admin", "admin-password")
+
+    response = client.get("/app/admin/actors")
+    assert response.status_code == 200
+    assert "/assets/admin.js" in response.text
+    assert "/assets/admin.css" in response.text
+    assert "/app/admin/actors" in response.text
+
+
+def test_blackbox_frontend_asset_visibility_matrix(tmp_path):
+    anonymous = TestClient(create_app(str(tmp_path)))
+    user_client = make_client(tmp_path)
+    admin_client = make_client(tmp_path)
+
+    login(user_client)
+    login(admin_client, "admin", "admin-password")
+
+    anonymous_root = anonymous.get("/")
+    assert anonymous_root.status_code == 200
+    assert "/static/login.js" in anonymous_root.text
+    assert "/static/login.css" in anonymous_root.text
+    assert "/assets/app.js" not in anonymous_root.text
+    assert "/assets/admin.js" not in anonymous_root.text
+
+    anonymous_app = anonymous.get("/app")
+    assert anonymous_app.status_code == 200
+    assert "/static/login.js" in anonymous_app.text
+    assert "/assets/app.js" not in anonymous_app.text
+    assert "/assets/admin.js" not in anonymous_app.text
+
+    assert anonymous.get("/static/login.js").status_code == 200
+    assert anonymous.get("/static/login.css").status_code == 200
+    assert anonymous.get("/assets/app.js").status_code == 401
+    assert anonymous.get("/assets/app.css").status_code == 401
+    assert anonymous.get("/assets/admin.js").status_code == 401
+    assert anonymous.get("/assets/admin.css").status_code == 401
+
+    user_root = user_client.get("/")
+    assert user_root.status_code == 200
+    assert "/assets/app.js" in user_root.text
+    assert "/assets/app.css" in user_root.text
+    assert "/assets/admin.js" not in user_root.text
+    assert "/assets/admin.css" not in user_root.text
+    assert "/app/admin/actors" not in user_root.text
+
+    user_app = user_client.get("/app")
+    assert user_app.status_code == 200
+    assert "/assets/app.js" in user_app.text
+    assert "/assets/admin.js" not in user_app.text
+
+    assert user_client.get("/assets/app.js").status_code == 200
+    assert user_client.get("/assets/app.css").status_code == 200
+    assert user_client.get("/assets/admin.js").status_code == 403
+    assert user_client.get("/assets/admin.css").status_code == 403
+    assert user_client.get("/app/admin/actors").status_code == 403
+
+    admin_root = admin_client.get("/")
+    assert admin_root.status_code == 200
+    assert "/assets/app.js" in admin_root.text
+    assert "/assets/admin.js" not in admin_root.text
+    assert "/assets/admin.css" not in admin_root.text
+
+    admin_app = admin_client.get("/app")
+    assert admin_app.status_code == 200
+    assert "/assets/app.js" in admin_app.text
+    assert "/assets/admin.js" not in admin_app.text
+
+    admin_route = admin_client.get("/app/admin/actors")
+    assert admin_route.status_code == 200
+    assert "/assets/app.js" in admin_route.text
+    assert "/assets/admin.js" in admin_route.text
+    assert "/assets/admin.css" in admin_route.text
+
+    assert admin_client.get("/assets/app.js").status_code == 200
+    assert admin_client.get("/assets/app.css").status_code == 200
+    assert admin_client.get("/assets/admin.js").status_code == 200
+    assert admin_client.get("/assets/admin.css").status_code == 200
 
 
 def test_self_profile_update(tmp_path):
@@ -65,7 +200,7 @@ def test_workspace_visibility_and_admin_visibility(tmp_path):
     agent_spaces = client.get("/api/workspaces", headers=agent_headers()).json()["workspaces"]
     assert [workspace["name"] for workspace in agent_spaces] == ["main-agent"]
 
-    login(client, "admin", "admin")
+    login(client, "admin", "admin-password")
     admin_spaces = client.get("/api/workspaces").json()["workspaces"]
     names = {workspace["name"] for workspace in admin_spaces}
     assert {"admin", "huangshiyu", "main-agent", "cli-agent"}.issubset(names)
@@ -182,6 +317,39 @@ def test_pdf_preview_route_returns_pdf_media_type(tmp_path):
     preview = client.get("/preview/huangshiyu/sample.pdf")
     assert preview.status_code == 200, preview.text
     assert preview.headers["content-type"].startswith("application/pdf")
+
+
+def test_markdown_preview_escapes_raw_html(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    write = client.post(
+        "/api/files/text",
+        json={
+            "workspace": "huangshiyu",
+            "path": "notes/xss.md",
+            "content": "# Title\n<script>alert(1)</script>",
+        },
+    )
+    assert write.status_code == 200, write.text
+
+    preview = client.get(
+        "/api/files/markdown",
+        params={"workspace": "huangshiyu", "path": "notes/xss.md"},
+    )
+    assert preview.status_code == 200, preview.text
+    assert "<script>alert(1)</script>" not in preview.text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in preview.text
+
+
+def test_database_init_does_not_seed_default_accounts(tmp_path):
+    app = create_app(str(tmp_path))
+    client = TestClient(app)
+
+    session = client.get("/api/session")
+    assert session.status_code == 200
+    assert session.json()["actor"] is None
+    assert app.state.db.list_actors() == []
 
 
 def test_upload_requires_overwrite_and_supports_named_destination(tmp_path):
@@ -444,12 +612,12 @@ def test_share_member_and_actor_management_routes(tmp_path):
     assert listed_workspaces.status_code == 200, listed_workspaces.text
     assert all(item["name"] != "team-alpha" for item in listed_workspaces.json()["workspaces"])
 
-    login(client, "admin", "admin")
+    login(client, "admin", "admin-password")
     seeded_actors = client.get("/api/actors", params={"include_inactive": "true"})
     assert seeded_actors.status_code == 200, seeded_actors.text
     main_agent = next(item for item in seeded_actors.json()["actors"] if item["actor_id"] == "agent:main-agent")
     admin_user = next(item for item in seeded_actors.json()["actors"] if item["actor_id"] == "user:admin")
-    assert main_agent["token"] == "main-agent-token"
+    assert main_agent["token"] == "test-main-agent-token"
     assert admin_user["token"] is None
 
     create_actor = client.post(
