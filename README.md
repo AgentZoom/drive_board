@@ -25,16 +25,9 @@ drive-board serve --port 8362
 
 上面这组命令只用于本地开发或调试启动服务；如无特殊说明，Agent 和自动化脚本在实际使用时默认连接生产环境 `http://drive.mm-lab.cn`。
 
-首次启动会创建 demo 身份：
-
-| 身份               | 登录或 Token                             |
-| ------------------ | ---------------------------------------- |
-| `user:admin`       | 网页账号 `admin`，密码 `admin`           |
-| `user:huangshiyu`  | 网页账号 `huangshiyu`，密码 `huangshiyu` |
-| `agent:main-agent` | `main-agent-token`                       |
-| `agent:cli-agent`  | `cli-agent-token`                        |
-
 本地数据默认在 `./data`，可用 `DRIVE_BOARD_DATA_DIR` 或 `drive-board serve --data-dir` 指定。
+
+生产环境不会自动 seed 默认账号或 token。首次可用身份需要通过你自己的初始化流程创建。
 
 ## CLI
 
@@ -58,3 +51,24 @@ drive-board shares add main-agent test_html --actor agent:cli-agent --permission
 ```bash
 python -m pytest
 ```
+
+## Frontend Build
+
+这个仓库默认直接读取 `drive_board/web` 下的源码前端文件，适合本地开发。
+
+生产环境需要先构建前端：
+
+```bash
+npm install
+npm run build:frontend
+DRIVE_BOARD_ENV=production drive-board serve --port 8362
+```
+
+生产构建的行为：
+
+- 不生成 Source Map，也不会把 `.map` 文件写入 `drive_board/web/dist`
+- 对 HTML、CSS、JS 做压缩
+- JS 通过 esbuild 做 bundle、minify、identifier 压缩和 tree shaking
+- 生产构建后再用 `javascript-obfuscator` 做额外混淆，包括字符串数组编码和受控的 control-flow flattening
+
+如果设置了 `DRIVE_BOARD_ENV=production` 但没有先执行 `npm run build:frontend`，服务会直接启动失败，避免把源码版前端直接发到生产环境

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from drive_board.config import AppConfig
 from drive_board.main import create_app
+from drive_board.main import resolve_frontend_assets
 
 
 def make_client(tmp_path):
@@ -65,6 +69,65 @@ def test_login_and_token_identity(tmp_path):
     agent = client.get("/api/me", headers=agent_headers())
     assert agent.status_code == 200
     assert agent.json()["actor"]["actor_id"] == "agent:main-agent"
+
+
+def test_development_frontend_assets_use_source_tree(tmp_path):
+    web_dir = tmp_path / "web"
+    static_dir = web_dir / "static"
+    static_dir.mkdir(parents=True)
+    (web_dir / "login.html").write_text("login-source", encoding="utf-8")
+    (web_dir / "app.html").write_text("app-source", encoding="utf-8")
+    for name in ["login.css", "login.js", "styles.css", "app.js", "admin.css", "admin.js"]:
+        (static_dir / name).write_text(name, encoding="utf-8")
+
+    config = AppConfig(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "drive_board.sqlite3",
+        storage_dir=tmp_path / "data" / "storage",
+        environment="development",
+    )
+    assets = resolve_frontend_assets(config, web_dir=web_dir)
+
+    assert assets.login_html_path == web_dir / "login.html"
+    assert assets.app_html_path == web_dir / "app.html"
+    assert assets.app_js_path == static_dir / "app.js"
+    assert assets.admin_css_path == static_dir / "admin.css"
+
+
+def test_production_frontend_assets_require_built_files(tmp_path):
+    web_dir = tmp_path / "web"
+    web_dir.mkdir(parents=True)
+
+    config = AppConfig(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "drive_board.sqlite3",
+        storage_dir=tmp_path / "data" / "storage",
+        environment="production",
+    )
+
+    with pytest.raises(RuntimeError, match="production frontend assets are missing"):
+        resolve_frontend_assets(config, web_dir=web_dir)
+
+
+def test_production_frontend_assets_use_dist_tree(tmp_path):
+    web_dir = tmp_path / "web"
+    dist_dir = web_dir / "dist"
+    dist_dir.mkdir(parents=True)
+    for name in ["login.html", "app.html", "login.css", "login.js", "app.css", "app.js", "admin.css", "admin.js"]:
+        (dist_dir / name).write_text(name, encoding="utf-8")
+
+    config = AppConfig(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "drive_board.sqlite3",
+        storage_dir=tmp_path / "data" / "storage",
+        environment="production",
+    )
+    assets = resolve_frontend_assets(config, web_dir=web_dir)
+
+    assert assets.login_html_path == dist_dir / "login.html"
+    assert assets.app_html_path == dist_dir / "app.html"
+    assert assets.app_css_path == dist_dir / "app.css"
+    assert assets.admin_js_path == dist_dir / "admin.js"
 
 
 def test_app_routes_require_auth_shell_and_hide_private_assets(tmp_path):
@@ -176,6 +239,15 @@ def test_blackbox_frontend_asset_visibility_matrix(tmp_path):
     assert admin_client.get("/assets/app.css").status_code == 200
     assert admin_client.get("/assets/admin.js").status_code == 200
     assert admin_client.get("/assets/admin.css").status_code == 200
+
+
+def test_shared_app_bundle_does_not_embed_admin_manager_details():
+    app_bundle = Path("/Users/huangsy16/huangshiyu/Task/repos/AgentZoom/drive_board/drive_board/web/static/app.js").read_text(encoding="utf-8")
+
+    assert '/api/actors?include_inactive=true' not in app_bundle
+    assert 'Agent Token' not in app_bundle
+    assert 'token-visibility' not in app_bundle
+    assert 'extension?.openActorManager' in app_bundle
 
 
 def test_self_profile_update(tmp_path):

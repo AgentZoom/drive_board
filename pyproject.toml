@@ -30,7 +30,7 @@ drive-board = "drive_board.cli:app"
 include = ["drive_board*"]
 
 [tool.setuptools.package-data]
-drive_board = ["web/*.html", "web/static/*"]
+drive_board = ["web/*.html", "web/static/*", "web/dist/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
