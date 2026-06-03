@@ -246,7 +246,7 @@ export function installExtension(context) {
       return true;
     },
     activeNavButtonId(currentState) {
-      return currentState.activeView === 'extension:admin' ? 'extensionEntryLink' : null;
+      return currentState.activeView === 'extension:admin' ? 'adminBtn' : null;
     },
     async refreshManager(managerMode) {
       if (managerMode !== 'extension:admin') {

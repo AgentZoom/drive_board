@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:frontend": "node scripts/build-frontend.mjs"
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "test:frontend": "node --test tests/frontend/*.test.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.5",

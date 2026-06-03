@@ -1,10 +1,25 @@
-const DEFAULT_PAGE_SIZE = 20;
-const ALLOWED_PAGE_SIZES = new Set([10, 20, 50, 100]);
-const ROUTE_PREFIX = "/app";
-const PDFJS_MODULE_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
-const PDFJS_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.mjs";
+import {
+  DEFAULT_PAGE_SIZE,
+  EDITABLE_PREVIEW_TYPES,
+  ICONS,
+  MEMBER_PERMISSIONS,
+  NAME_COLLATOR,
+  PDFJS_MODULE_URL,
+  PDFJS_WORKER_URL,
+} from "./app/constants.js";
+import { RouteController } from "./app/routing/RouteController.js";
+import { UploadProgressController } from "./app/upload/UploadProgressController.js";
+import { formatDate, formatDuration, formatPercent, formatSize, formatSpeed } from "./app/utils/formatters.js";
+import { createPathHelpers } from "./app/utils/path-helpers.js";
+import {
+  downloadUrl,
+  previewUrl,
+  publicLinksApiUrl,
+  toAbsoluteUrl,
+  workspacePublicLinksApiUrl,
+} from "./app/utils/url.js";
+import { PreviewController } from "./app/preview/PreviewController.js";
 
-let pdfJsPromise = null;
 let routeExtension = null;
 
 const state = {
@@ -31,62 +46,6 @@ const state = {
   dragDepth: 0,
   isUploading: false,
   uploadTracker: null,
-};
-
-const EDITABLE_PREVIEW_TYPES = new Set(["html", "markdown", "text"]);
-const MEMBER_PERMISSIONS = ["read", "write", "owner"];
-const NAME_COLLATOR = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
-const CODE_EXTENSIONS = new Set([
-  "c",
-  "cc",
-  "cpp",
-  "css",
-  "go",
-  "h",
-  "hpp",
-  "java",
-  "js",
-  "json",
-  "jsx",
-  "lua",
-  "php",
-  "py",
-  "rb",
-  "rs",
-  "scss",
-  "sh",
-  "sql",
-  "toml",
-  "ts",
-  "tsx",
-  "xml",
-  "yaml",
-  "yml",
-]);
-const ICONS = {
-  folder: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />',
-  "folder-up": '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" /><path d="m12 15 0-6" /><path d="m9.5 11.5 2.5-2.5 2.5 2.5" />',
-  file: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />',
-  text: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M9 13h6" /><path d="M9 17h6" />',
-  code: '<path d="m8 9-5 3 5 3" /><path d="m16 9 5 3-5 3" /><path d="m14 4-4 16" />',
-  html: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="m9 12-2 2 2 2" /><path d="m15 12 2 2-2 2" />',
-  markdown: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8.5 17v-5l2.5 2.5 2.5-2.5v5" /><path d="M16 12v5" />',
-  pdf: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M9 17v-5h2a1.5 1.5 0 0 1 0 3H9" /><path d="M14 17v-5" /><path d="M14 14h2.5" />',
-  image: '<rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10" r="1.5" /><path d="m21 15-4.5-4.5L7 20" />',
-  audio: '<path d="M11 5 6 9H3v6h3l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 6a8.5 8.5 0 0 1 0 12" />',
-  video: '<rect x="3" y="5" width="14" height="14" rx="2" /><path d="m17 10 4-3v10l-4-3z" /><path d="m9 10 4 2-4 2z" />',
-  binary: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8.5 13h7" /><path d="M8.5 17h3" />',
-  preview: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="3" />',
-  edit: '<path d="M12 20h9" /><path d="m16.5 3.5 4 4L8 20l-4 1 1-4Z" />',
-  download: '<path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" />',
-  share: '<circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4" /><path d="m15.4 6.5-6.8 4" />',
-  modify: '<circle cx="12" cy="12" r="9" /><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none" />',
-  delete: '<path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m19 6-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" />',
-  copy: '<rect x="9" y="9" width="11" height="11" rx="2" /><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />',
-  eye: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="3" />',
-  "eye-off": '<path d="M3 3 21 21" /><path d="M10.7 5.1A11.8 11.8 0 0 1 12 5c6.4 0 10 7 10 7a18.7 18.7 0 0 1-4.1 4.9" /><path d="M6.6 6.6A18.2 18.2 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6" /><path d="M9.9 9.9A3 3 0 0 0 14.1 14.1" />',
-  play: '<path d="M8 6v12l10-6Z" fill="currentColor" stroke="none" />',
-  pause: '<rect x="7" y="6" width="4" height="12" rx="1.2" fill="currentColor" stroke="none" /><rect x="13" y="6" width="4" height="12" rx="1.2" fill="currentColor" stroke="none" />',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -116,6 +75,76 @@ function renderSvgIcon(name) {
   `;
 }
 
+const {
+  buildDestinationPath,
+  fileExtension,
+  fileIconMarkup,
+  folderBreadcrumbMarkup,
+  isDescendantOrSamePath,
+  joinRelativePath,
+  leafName,
+  normalizePathInput,
+  parentFolderPath,
+  suggestCopyPath,
+  typeKey,
+  typeLabel,
+} = createPathHelpers({ escapeHtml, renderSvgIcon });
+
+const uploadProgress = new UploadProgressController({ state, getById: $, escapeHtml });
+const routeController = new RouteController({
+  state,
+  getExtension: () => routeExtension,
+  normalizePathInput,
+});
+const previewController = new PreviewController({
+  state,
+  getById: $,
+  api,
+  escapeHtml,
+  renderSvgIcon,
+  formatDuration,
+  previewUrl,
+  toAbsoluteUrl,
+  openHtmlPreview,
+  downloadItem,
+  syncUploadDock,
+  closeManager,
+  closeAllActionMenus,
+  loadFiles,
+  canEditItem,
+  toast,
+  pdfModuleUrl: PDFJS_MODULE_URL,
+  pdfWorkerUrl: PDFJS_WORKER_URL,
+});
+
+function resetPreviewDialog() {
+  previewController.resetDialog();
+}
+
+async function previewItem(item) {
+  await previewController.previewItem(item);
+}
+
+async function previewItemForWorkspace(workspace, item) {
+  await previewController.previewItemForWorkspace(workspace, item);
+}
+
+async function saveEditor() {
+  await previewController.saveEditor();
+}
+
+function buildAppUrl() {
+  return routeController.buildUrl();
+}
+
+function syncRoute({ replace = false } = {}) {
+  return routeController.sync({ replace });
+}
+
+function parseAppRoute() {
+  return routeController.parseRoute();
+}
+
 async function api(path, options = {}) {
   const init = { ...options, headers: { ...(options.headers || {}) } };
   if (init.body && !(init.body instanceof FormData)) {
@@ -140,46 +169,8 @@ async function api(path, options = {}) {
   return response.text();
 }
 
-function previewUrl(workspace, path) {
-  const encodedPath = String(path || "")
-    .split("/")
-    .filter(Boolean)
-    .map(encodeURIComponent)
-    .join("/");
-  return `/preview/${encodeURIComponent(workspace)}/${encodedPath}`;
-}
-
-function downloadUrl(workspace, path) {
-  const params = new URLSearchParams({ workspace, path });
-  return `/api/files/download?${params.toString()}`;
-}
-
-function publicLinksApiUrl(workspace, path) {
-  const params = new URLSearchParams({ workspace, path });
-  return `/api/public-links?${params.toString()}`;
-}
-
-function workspacePublicLinksApiUrl(workspace) {
-  const params = new URLSearchParams({ workspace });
-  return `/api/public-links?${params.toString()}`;
-}
-
-function toAbsoluteUrl(path) {
-  return new URL(path, window.location.origin).toString();
-}
-
-function decodeRoutePart(value) {
-  if (!value) return "";
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
 function normalizePageSize(value) {
-  const size = Number(value) || DEFAULT_PAGE_SIZE;
-  return ALLOWED_PAGE_SIZES.has(size) ? size : DEFAULT_PAGE_SIZE;
+  return routeController.normalizePageSize(value);
 }
 
 function ensureStylesheet(href) {
@@ -231,154 +222,13 @@ function resolveRouteWorkspace(name) {
   return state.workspaces[0]?.name || null;
 }
 
-function buildAppUrl() {
-  const segments = [ROUTE_PREFIX];
-  const params = new URLSearchParams();
-
-  switch (state.activeView) {
-    case "shared":
-      segments.push("shared");
-      if (state.currentWorkspace) {
-        params.set("workspace", state.currentWorkspace);
-      }
-      break;
-    case "share-manager":
-      segments.push("share-manager");
-      if (state.currentWorkspace) {
-        segments.push(encodeURIComponent(state.currentWorkspace));
-      }
-      break;
-    case "workspace-members":
-      segments.push("workspace-members");
-      if (state.currentWorkspace) {
-        segments.push(encodeURIComponent(state.currentWorkspace));
-      }
-      break;
-    case "actor-admin":
-      segments.push("admin", "actors");
-      if (state.currentWorkspace) {
-        params.set("workspace", state.currentWorkspace);
-      }
-      break;
-    case "profile":
-      segments.push("profile");
-      if (state.currentWorkspace) {
-        params.set("workspace", state.currentWorkspace);
-      }
-      break;
-    case "files":
-    default: {
-      segments.push("files");
-      if (state.currentWorkspace) {
-        segments.push(encodeURIComponent(state.currentWorkspace));
-        const normalizedPath = normalizePathInput(state.currentPath);
-        if (normalizedPath) {
-          segments.push(...normalizedPath.split("/").map(encodeURIComponent));
-        }
-      }
-      if (state.fileQuery) {
-        params.set("q", state.fileQuery);
-      }
-      if (state.sortField !== "modified_at") {
-        params.set("sort", state.sortField);
-      }
-      if (state.sortDirection !== defaultSortDirection(state.sortField)) {
-        params.set("dir", state.sortDirection);
-      }
-      if (state.page !== 1) {
-        params.set("page", String(state.page));
-      }
-      if (state.pageSize !== DEFAULT_PAGE_SIZE) {
-        params.set("size", String(state.pageSize));
-      }
-      break;
-    }
-  }
-
-  const query = params.toString();
-  return `${segments.join("/")}${query ? `?${query}` : ""}`;
-}
-
-function syncRoute({ replace = false } = {}) {
-  const nextUrl = buildAppUrl();
-  const currentUrl = `${window.location.pathname}${window.location.search}`;
-  if (nextUrl === currentUrl) {
-    return;
-  }
-  window.history[replace ? "replaceState" : "pushState"](null, "", nextUrl);
-}
-
-function parseAppRoute() {
-  const url = new URL(window.location.href);
-  const segments = url.pathname.split("/").filter(Boolean).map(decodeRoutePart);
-  if (segments[0] !== ROUTE_PREFIX.slice(1)) {
-    return null;
-  }
-
-  const params = url.searchParams;
-  const route = {
-    view: "files",
-    workspace: null,
-    path: "",
-    fileQuery: "",
-    sortField: "modified_at",
-    sortDirection: "desc",
-    page: 1,
-    pageSize: DEFAULT_PAGE_SIZE,
-  };
-
-  if (segments[1] === "shared") {
-    route.view = "shared";
-    route.workspace = params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "share-manager") {
-    route.view = "share-manager";
-    route.workspace = segments[2] || params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "workspace-members") {
-    route.view = "workspace-members";
-    route.workspace = segments[2] || params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "admin" && segments[2] === "actors") {
-    route.view = "actor-admin";
-    route.workspace = params.get("workspace") || null;
-    return route;
-  }
-  if (segments[1] === "profile") {
-    route.view = "profile";
-    route.workspace = params.get("workspace") || null;
-    return route;
-  }
-
-  const fileSegments = segments[1] === "files" ? segments.slice(2) : [];
-  route.workspace = fileSegments[0] || params.get("workspace") || null;
-  route.path = fileSegments.length > 1 ? fileSegments.slice(1).join("/") : "";
-  route.fileQuery = params.get("q") || "";
-
-  const sortField = params.get("sort");
-  if (["name", "size", "modified_at"].includes(sortField)) {
-    route.sortField = sortField;
-  }
-  const sortDirection = params.get("dir");
-  route.sortDirection = sortDirection === "asc" || sortDirection === "desc"
-    ? sortDirection
-    : defaultSortDirection(route.sortField);
-
-  const page = Number.parseInt(params.get("page") || "1", 10);
-  route.page = Number.isInteger(page) && page > 0 ? page : 1;
-  route.pageSize = normalizePageSize(params.get("size"));
-  return route;
-}
-
 function applyFileRoutePreferences(route = null) {
-  state.fileQuery = route?.fileQuery || "";
-  state.sortField = route?.sortField || "modified_at";
-  state.sortDirection = route?.sortDirection || defaultSortDirection(state.sortField);
-  state.page = route?.page || 1;
-  state.pageSize = normalizePageSize(route?.pageSize);
+  const preferences = routeController.fileRoutePreferences(route);
+  state.fileQuery = preferences.fileQuery;
+  state.sortField = preferences.sortField;
+  state.sortDirection = preferences.sortDirection;
+  state.page = preferences.page;
+  state.pageSize = preferences.pageSize;
   $("fileSearchInput").value = state.fileQuery;
   $("pageSizeSelect").value = String(state.pageSize);
 }
@@ -522,401 +372,6 @@ async function copyText(value) {
   }
 }
 
-function normalizePathInput(value) {
-  return String(value ?? "")
-    .trim()
-    .replaceAll("\\", "/")
-    .replace(/^\/+|\/+$/g, "");
-}
-
-function leafName(path) {
-  const normalized = normalizePathInput(path);
-  if (!normalized) return "";
-  return normalized.split("/").pop() || "";
-}
-
-function parentFolderPath(path) {
-  const normalized = normalizePathInput(path);
-  if (!normalized || !normalized.includes("/")) return "";
-  return normalized.split("/").slice(0, -1).join("/");
-}
-
-function joinRelativePath(folder, name) {
-  const normalizedFolder = normalizePathInput(folder);
-  return normalizedFolder ? `${normalizedFolder}/${name}` : name;
-}
-
-function fileExtension(path) {
-  const name = leafName(path);
-  const index = name.lastIndexOf(".");
-  return index > -1 ? name.slice(index + 1).toLowerCase() : "";
-}
-
-function typeKey(item) {
-  if (!item || item.kind === "folder") {
-    return "folder";
-  }
-  if (item.preview_type === "text" && CODE_EXTENSIONS.has(fileExtension(item.path || item.name))) {
-    return "code";
-  }
-  return item.preview_type || "binary";
-}
-
-function typeLabel(item) {
-  return {
-    folder: "文件夹",
-    html: "HTML",
-    markdown: "Markdown",
-    code: "代码",
-    text: "文本",
-    pdf: "PDF",
-    image: "图片",
-    audio: "音频",
-    video: "视频",
-    binary: "文件",
-  }[typeKey(item)] || "文件";
-}
-
-function fileIconMarkup(item) {
-  const kind = typeKey(item);
-  return `<span class="file-icon" data-file-kind="${escapeHtml(kind)}">${renderSvgIcon(kind === "folder" ? "folder" : kind)}</span>`;
-}
-
-function suggestCopyPath(item) {
-  const parent = parentFolderPath(item.path);
-  const extensionIndex = item.kind === "file" ? item.name.lastIndexOf(".") : -1;
-  const copyName = extensionIndex > 0
-    ? `${item.name.slice(0, extensionIndex)}-copy${item.name.slice(extensionIndex)}`
-    : `${item.name}-copy`;
-  return joinRelativePath(parent, copyName);
-}
-
-function isDescendantOrSamePath(parent, child) {
-  const normalizedParent = normalizePathInput(parent);
-  const normalizedChild = normalizePathInput(child);
-  return Boolean(normalizedParent)
-    && (normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}/`));
-}
-
-function buildDestinationPath(folder, name) {
-  const trimmedName = String(name ?? "").trim();
-  if (!trimmedName) {
-    throw new Error("名称不能为空");
-  }
-  if (/[\\/]/.test(trimmedName)) {
-    throw new Error("名称不能包含路径分隔符");
-  }
-  return joinRelativePath(folder, trimmedName);
-}
-
-function folderBreadcrumbMarkup(path) {
-  const crumbs = ['<button type="button" data-folder-path="">根目录</button>'];
-  const parts = normalizePathInput(path) ? normalizePathInput(path).split("/") : [];
-  let cursor = "";
-  for (const part of parts) {
-    cursor = cursor ? `${cursor}/${part}` : part;
-    crumbs.push(`<span>/</span><button type="button" data-folder-path="${escapeHtml(cursor)}">${escapeHtml(part)}</button>`);
-  }
-  return crumbs.join("");
-}
-
-function formatSize(size) {
-  if (size === null || size === undefined) return "";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function formatDate(value) {
-  if (!value) return "";
-  return new Date(value).toLocaleString();
-}
-
-function formatDuration(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-  const totalSeconds = Math.floor(seconds);
-  const minutes = Math.floor(totalSeconds / 60);
-  const remainder = totalSeconds % 60;
-  return `${minutes}:${String(remainder).padStart(2, "0")}`;
-}
-
-function formatPercent(value) {
-  if (!Number.isFinite(value) || value <= 0) return "0%";
-  if (value >= 100) return "100%";
-  return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
-}
-
-function formatSpeed(bytesPerSecond) {
-  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "--";
-  return `${formatSize(bytesPerSecond)}/s`;
-}
-
-function createUploadTracker(files) {
-  return {
-    startedAt: Date.now(),
-    finishedAt: null,
-    totalBytes: files.reduce((sum, file) => sum + Math.max(0, Number(file.size) || 0), 0),
-    speed: 0,
-    files: files.map((file, index) => ({
-      id: `${Date.now()}-${index}`,
-      name: file.name,
-      size: Math.max(0, Number(file.size) || 0),
-      loaded: 0,
-      speed: 0,
-      averageSpeed: 0,
-      status: "queued",
-      message: "排队中",
-      startedAt: null,
-      completedAt: null,
-      lastLoaded: 0,
-      lastProgressAt: null,
-    })),
-  };
-}
-
-function uploadTrackerSummary() {
-  const tracker = state.uploadTracker;
-  if (!tracker) return null;
-  const totalFiles = tracker.files.length;
-  const processedFiles = tracker.files.filter((file) => ["done", "overwritten", "skipped"].includes(file.status)).length;
-  const failedFiles = tracker.files.filter((file) => file.status === "error").length;
-  const totalLoaded = tracker.files.reduce((sum, file) => sum + Math.min(file.loaded || 0, file.size || 0), 0);
-  const percent = tracker.totalBytes > 0 ? (totalLoaded / tracker.totalBytes) * 100 : totalFiles ? (processedFiles / totalFiles) * 100 : 0;
-  const finishedAt = tracker.finishedAt || Date.now();
-  const elapsedSeconds = Math.max((finishedAt - tracker.startedAt) / 1000, 0.001);
-  const overallAverageSpeed = totalLoaded > 0 ? totalLoaded / elapsedSeconds : 0;
-  const activeIndex = tracker.files.findIndex((file) => file.status === "uploading");
-  return {
-    totalFiles,
-    processedFiles,
-    failedFiles,
-    totalLoaded,
-    percent,
-    overallSpeed: tracker.speed || 0,
-    overallAverageSpeed,
-    activeIndex,
-  };
-}
-
-function ensureUploadProgressRows(tracker) {
-  const fileList = $("uploadFileList");
-  if (!fileList) return;
-  const count = Number(fileList.dataset.count || "0");
-  if (count === tracker.files.length) {
-    return;
-  }
-  fileList.innerHTML = tracker.files
-    .map((file, index) => `
-      <div id="uploadFileRow-${index}" class="upload-file-row" data-status="${escapeHtml(file.status)}">
-        <div class="upload-file-head">
-          <strong id="uploadFileName-${index}" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong>
-          <span id="uploadFilePercent-${index}">0%</span>
-        </div>
-        <div class="upload-file-bar" aria-hidden="true">
-          <span id="uploadFileFill-${index}" class="upload-file-fill"></span>
-        </div>
-        <div class="upload-file-meta">
-          <span id="uploadFileBytes-${index}">0 B / ${escapeHtml(formatSize(file.size))}</span>
-          <span id="uploadFileSpeed-${index}">实时 --</span>
-          <span id="uploadFileAverageSpeed-${index}">平均 --</span>
-          <span id="uploadFileStatus-${index}">排队中</span>
-        </div>
-      </div>
-    `)
-    .join("");
-  fileList.dataset.count = String(tracker.files.length);
-}
-
-function updateUploadFileRow(index) {
-  const tracker = state.uploadTracker;
-  const file = tracker?.files?.[index];
-  if (!file) return;
-  const row = $(`uploadFileRow-${index}`);
-  if (!row) return;
-  const loaded = Math.min(file.loaded || 0, file.size || 0);
-  const percent = file.size > 0 ? (loaded / file.size) * 100 : (["done", "overwritten", "skipped"].includes(file.status) ? 100 : 0);
-  row.dataset.status = file.status;
-  $(`uploadFilePercent-${index}`).textContent = formatPercent(percent);
-  $(`uploadFileFill-${index}`).style.width = `${Math.max(0, Math.min(100, percent))}%`;
-  $(`uploadFileBytes-${index}`).textContent = `${formatSize(loaded)} / ${formatSize(file.size)}`;
-  $(`uploadFileSpeed-${index}`).textContent = `实时 ${formatSpeed(file.speed)}`;
-  $(`uploadFileAverageSpeed-${index}`).textContent = `平均 ${formatSpeed(file.averageSpeed)}`;
-  $(`uploadFileStatus-${index}`).textContent = file.message;
-}
-
-function updateUploadProgressDom() {
-  const panel = $("uploadProgressPanel");
-  const fileList = $("uploadFileList");
-  const closeButton = $("uploadProgressCloseBtn");
-  const tracker = state.uploadTracker;
-  if (!panel || !fileList || !closeButton) return;
-  if (!tracker?.files?.length) {
-    panel.classList.add("hidden");
-    fileList.innerHTML = "";
-    fileList.dataset.count = "0";
-    closeButton.disabled = true;
-    return;
-  }
-  panel.classList.remove("hidden");
-  closeButton.disabled = state.isUploading;
-  ensureUploadProgressRows(tracker);
-  const summary = uploadTrackerSummary();
-  if (!summary) return;
-  const title = state.isUploading
-    ? `正在上传 ${summary.activeIndex > -1 ? `${summary.activeIndex + 1}/${summary.totalFiles}` : `${summary.processedFiles}/${summary.totalFiles}`}`
-    : summary.failedFiles
-      ? "上传已中断"
-      : "上传完成";
-  $("uploadOverallTitle").textContent = title;
-  $("uploadOverallStats").textContent = `${summary.processedFiles} / ${summary.totalFiles} 个文件`;
-  $("uploadOverallPercent").textContent = formatPercent(summary.percent);
-  $("uploadOverallSpeed").textContent = `实时 ${formatSpeed(summary.overallSpeed)}`;
-  $("uploadOverallAverageSpeed").textContent = `平均 ${formatSpeed(summary.overallAverageSpeed)}`;
-  $("uploadOverallBytes").textContent = `${formatSize(summary.totalLoaded)} / ${formatSize(tracker.totalBytes)}`;
-  $("uploadOverallBarFill").style.width = `${Math.max(0, Math.min(100, summary.percent))}%`;
-  tracker.files.forEach((_, index) => updateUploadFileRow(index));
-}
-
-function clearUploadTracker() {
-  if (state.isUploading) {
-    return false;
-  }
-  state.uploadTracker = null;
-  updateUploadProgressDom();
-  syncUploadDock();
-  return true;
-}
-
-function destinationUploadPath() {
-  return state.currentPath ? `${state.currentPath}/` : "";
-}
-
-function readUploadError(xhr) {
-  const contentType = xhr.getResponseHeader("content-type") || "";
-  if (contentType.includes("application/json") && xhr.response && typeof xhr.response === "object") {
-    return xhr.response.detail || xhr.statusText || "upload failed";
-  }
-  if (typeof xhr.responseText === "string" && xhr.responseText.trim()) {
-    try {
-      return JSON.parse(xhr.responseText).detail || xhr.responseText;
-    } catch {
-      return xhr.responseText;
-    }
-  }
-  return xhr.statusText || "upload failed";
-}
-
-function requestFileUpload(file, { overwrite = false, onProgress } = {}) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/files/upload");
-    xhr.responseType = "json";
-    xhr.withCredentials = true;
-    xhr.upload.addEventListener("progress", (event) => {
-      if (!onProgress) return;
-      const total = event.lengthComputable ? event.total : Math.max(0, Number(file.size) || 0);
-      onProgress({ loaded: event.loaded, total });
-    });
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        if (onProgress) {
-          onProgress({ loaded: Math.max(0, Number(file.size) || 0), total: Math.max(0, Number(file.size) || 0) });
-        }
-        resolve(xhr.response && typeof xhr.response === "object" ? xhr.response : JSON.parse(xhr.responseText || "null"));
-        return;
-      }
-      const error = new Error(readUploadError(xhr));
-      error.status = xhr.status;
-      reject(error);
-    });
-    xhr.addEventListener("error", () => {
-      const error = new Error("上传失败，网络连接异常");
-      error.status = xhr.status || 0;
-      reject(error);
-    });
-    xhr.addEventListener("abort", () => {
-      const error = new Error("上传已取消");
-      error.status = 0;
-      reject(error);
-    });
-    const formData = new FormData();
-    formData.set("workspace", state.currentWorkspace || "");
-    formData.set("path", destinationUploadPath());
-    formData.set("overwrite", overwrite ? "true" : "false");
-    formData.set("file", file, file.name);
-    xhr.send(formData);
-  });
-}
-
-function startTrackedUpload(index) {
-  const tracker = state.uploadTracker;
-  const file = tracker?.files?.[index];
-  if (!file) return;
-  const now = Date.now();
-  file.loaded = 0;
-  file.speed = 0;
-  file.averageSpeed = 0;
-  file.startedAt = now;
-  file.completedAt = null;
-  file.lastLoaded = 0;
-  file.lastProgressAt = now;
-  file.status = "uploading";
-  file.message = "上传中";
-  tracker.speed = 0;
-  updateUploadProgressDom();
-}
-
-function updateTrackedUpload(index, loaded) {
-  const tracker = state.uploadTracker;
-  const file = tracker?.files?.[index];
-  if (!file) return;
-  const now = Date.now();
-  const nextLoaded = Math.max(0, Math.min(file.size || 0, loaded || 0));
-  const deltaBytes = Math.max(0, nextLoaded - (file.lastLoaded || 0));
-  const deltaSeconds = file.lastProgressAt ? Math.max((now - file.lastProgressAt) / 1000, 0.001) : 0;
-  file.loaded = nextLoaded;
-  file.speed = deltaSeconds ? deltaBytes / deltaSeconds : file.speed;
-  const elapsedSeconds = file.startedAt ? Math.max((now - file.startedAt) / 1000, 0.001) : 0;
-  file.averageSpeed = elapsedSeconds ? file.loaded / elapsedSeconds : 0;
-  file.lastLoaded = nextLoaded;
-  file.lastProgressAt = now;
-  tracker.speed = file.speed;
-  updateUploadProgressDom();
-}
-
-function finishTrackedUpload(index, status, message) {
-  const tracker = state.uploadTracker;
-  const file = tracker?.files?.[index];
-  if (!file) return;
-  const now = Date.now();
-  if (["done", "overwritten"].includes(status)) {
-    file.loaded = file.size;
-  }
-  const elapsedSeconds = file.startedAt ? Math.max((now - file.startedAt) / 1000, 0.001) : 0;
-  file.averageSpeed = elapsedSeconds ? file.loaded / elapsedSeconds : file.averageSpeed;
-  file.status = status;
-  file.speed = 0;
-  file.message = message;
-  file.completedAt = now;
-  tracker.speed = 0;
-  updateUploadProgressDom();
-}
-
-function failTrackedUpload(index, message) {
-  const tracker = state.uploadTracker;
-  const file = tracker?.files?.[index];
-  if (!file) return;
-  const now = Date.now();
-  const elapsedSeconds = file.startedAt ? Math.max((now - file.startedAt) / 1000, 0.001) : 0;
-  file.averageSpeed = elapsedSeconds ? file.loaded / elapsedSeconds : file.averageSpeed;
-  file.status = "error";
-  file.speed = 0;
-  file.message = message;
-  file.completedAt = now;
-  tracker.speed = 0;
-  updateUploadProgressDom();
-}
-
 function currentWorkspaceInfo() {
   return state.workspaces.find((workspace) => workspace.name === state.currentWorkspace) || null;
 }
@@ -971,7 +426,7 @@ function switchToFileView() {
 }
 
 function defaultSortDirection(field) {
-  return field === "modified_at" ? "desc" : "asc";
+  return routeController.defaultSortDirection(field);
 }
 
 function normalizeSearch(value) {
@@ -1152,12 +607,12 @@ function syncUploadDock() {
   }
   dropzone.disabled = state.isUploading;
   dropzone.classList.toggle("is-uploading", state.isUploading);
-  const summary = uploadTrackerSummary();
+  const summary = uploadProgress.summary();
   title.textContent = state.isUploading ? "正在上传" : (summary ? "继续上传" : "拖拽上传");
   hint.textContent = state.isUploading
     ? `${summary ? `${summary.processedFiles}/${summary.totalFiles} 个文件 · ${formatPercent(summary.percent)} · 实时 ${formatSpeed(summary.overallSpeed)}` : "文件上传中，请稍候"}`
     : `拖拽文件到这里，或点击选择文件，上传到 ${state.currentWorkspace}/${state.currentPath || ""}`;
-  updateUploadProgressDom();
+  uploadProgress.render();
 }
 
 function eventHasFiles(event) {
@@ -1229,325 +684,6 @@ function toggleActionMenu(menu) {
   }
 }
 
-function runPreviewCleanup() {
-  if (typeof state.previewCleanup === "function") {
-    try {
-      state.previewCleanup();
-    } catch {
-      // Cleanup should not block future previews.
-    }
-  }
-  state.previewCleanup = null;
-}
-
-function resetPreviewDialog() {
-  runPreviewCleanup();
-  state.currentItem = null;
-  state.editorPath = null;
-  $("contentGrid").classList.remove("detail-open");
-  $("detailPane").classList.add("hidden");
-  $("detailModeLabel").textContent = "详情";
-  $("previewTitle").textContent = "预览";
-  $("previewOpenBtn").classList.add("hidden");
-  $("previewOpenBtn").onclick = null;
-  $("saveTextBtn").classList.add("hidden");
-  $("previewBody").className = "preview-body preview-modal-body empty-state";
-  $("previewBody").textContent = "点击文件的预览或编辑按钮后在这里查看内容";
-  syncUploadDock();
-}
-
-function isPreviewOpen() {
-  return Boolean($("previewModal")?.open);
-}
-
-function resizeVisualizerCanvas(canvas) {
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(canvas.clientWidth || 640, 320);
-  const height = Math.max(canvas.clientHeight || 240, 180);
-  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
-  }
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return { ctx, width, height };
-}
-
-function createAudioVisualizer(audio, canvas) {
-  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextCtor) {
-    return () => {};
-  }
-
-  const context = new AudioContextCtor();
-  const analyser = context.createAnalyser();
-  analyser.fftSize = 256;
-  analyser.smoothingTimeConstant = 0.84;
-  const source = context.createMediaElementSource(audio);
-  source.connect(analyser);
-  analyser.connect(context.destination);
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  let frameId = 0;
-
-  const render = () => {
-    const { ctx, width, height } = resizeVisualizerCanvas(canvas);
-    ctx.clearRect(0, 0, width, height);
-
-    const bg = ctx.createLinearGradient(0, 0, width, height);
-    bg.addColorStop(0, "rgba(13, 33, 42, 0.95)");
-    bg.addColorStop(1, "rgba(14, 93, 88, 0.88)");
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, width, height);
-
-    for (let index = 0; index < 5; index += 1) {
-      ctx.strokeStyle = `rgba(220, 255, 246, ${0.04 + index * 0.02})`;
-      ctx.beginPath();
-      ctx.moveTo(0, (height / 4) * index);
-      ctx.lineTo(width, (height / 4) * index);
-      ctx.stroke();
-    }
-
-    analyser.getByteFrequencyData(data);
-    const barCount = Math.min(64, data.length);
-    const gap = 4;
-    const barWidth = (width - gap * (barCount - 1)) / barCount;
-    const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, "rgba(255, 255, 255, 0.95)");
-    gradient.addColorStop(0.35, "rgba(122, 255, 228, 0.9)");
-    gradient.addColorStop(1, "rgba(37, 200, 173, 0.15)");
-    ctx.fillStyle = gradient;
-
-    for (let index = 0; index < barCount; index += 1) {
-      const magnitude = (data[index] || 0) / 255;
-      const barHeight = Math.max(10, magnitude * (height - 36));
-      const x = index * (barWidth + gap);
-      const y = height - barHeight;
-      ctx.beginPath();
-      ctx.roundRect(x, y, Math.max(2, barWidth), barHeight, 10);
-      ctx.fill();
-    }
-
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let index = 0; index < barCount; index += 1) {
-      const magnitude = (data[index] || 0) / 255;
-      const x = index * (barWidth + gap) + barWidth / 2;
-      const y = height * 0.72 - magnitude * (height * 0.32);
-      if (index === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
-    }
-    ctx.stroke();
-
-    frameId = window.requestAnimationFrame(render);
-  };
-
-  const resume = () => {
-    context.resume().catch(() => {});
-    if (!frameId) {
-      render();
-    }
-  };
-
-  const handleVisibility = () => {
-    if (audio.paused && frameId) {
-      window.cancelAnimationFrame(frameId);
-      frameId = 0;
-    }
-    if (!audio.paused) {
-      resume();
-    }
-  };
-
-  audio.addEventListener("play", resume);
-  audio.addEventListener("pause", handleVisibility);
-  audio.addEventListener("ended", handleVisibility);
-  audio.addEventListener("canplay", resume, { once: true });
-  render();
-
-  return () => {
-    window.cancelAnimationFrame(frameId);
-    audio.pause();
-    audio.removeEventListener("play", resume);
-    audio.removeEventListener("pause", handleVisibility);
-    audio.removeEventListener("ended", handleVisibility);
-    try {
-      source.disconnect();
-      analyser.disconnect();
-    } catch {
-      // Ignore disconnect errors during teardown.
-    }
-    context.close().catch(() => {});
-  };
-}
-
-function createAudioPreview(audio, canvas, root) {
-  const visualizerCleanup = createAudioVisualizer(audio, canvas);
-  const playButton = root.querySelector("#audioPlayBtn");
-  const progress = root.querySelector("#audioProgress");
-  const currentTimeLabel = root.querySelector("#audioCurrentTime");
-  const durationLabel = root.querySelector("#audioDuration");
-
-  const syncAudioUi = () => {
-    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
-    const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
-    const progressValue = duration > 0 ? (currentTime / duration) * 100 : 0;
-    progress.value = String(progressValue);
-    progress.style.setProperty("--progress", `${progressValue}%`);
-    currentTimeLabel.textContent = formatDuration(currentTime);
-    durationLabel.textContent = formatDuration(duration);
-    playButton.innerHTML = renderSvgIcon(audio.paused ? "play" : "pause");
-    playButton.setAttribute("aria-label", audio.paused ? "播放" : "暂停");
-  };
-
-  const togglePlayback = async () => {
-    if (audio.paused) {
-      await audio.play();
-    } else {
-      audio.pause();
-    }
-    syncAudioUi();
-  };
-
-  const seekAudio = () => {
-    if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
-      return;
-    }
-    audio.currentTime = (Number(progress.value) / 100) * audio.duration;
-    syncAudioUi();
-  };
-
-  playButton.addEventListener("click", togglePlayback);
-  progress.addEventListener("input", seekAudio);
-  audio.addEventListener("loadedmetadata", syncAudioUi);
-  audio.addEventListener("durationchange", syncAudioUi);
-  audio.addEventListener("timeupdate", syncAudioUi);
-  audio.addEventListener("play", syncAudioUi);
-  audio.addEventListener("pause", syncAudioUi);
-  audio.addEventListener("ended", syncAudioUi);
-  syncAudioUi();
-
-  return () => {
-    playButton.removeEventListener("click", togglePlayback);
-    progress.removeEventListener("input", seekAudio);
-    audio.removeEventListener("loadedmetadata", syncAudioUi);
-    audio.removeEventListener("durationchange", syncAudioUi);
-    audio.removeEventListener("timeupdate", syncAudioUi);
-    audio.removeEventListener("play", syncAudioUi);
-    audio.removeEventListener("pause", syncAudioUi);
-    audio.removeEventListener("ended", syncAudioUi);
-    visualizerCleanup();
-  };
-}
-
-function createPdfPreview(src, root) {
-  const status = root.querySelector("#pdfPreviewStatus");
-  const pages = root.querySelector("#pdfPreviewPages");
-  let disposed = false;
-  let loadingTask = null;
-  const renderTasks = new Set();
-
-  const showError = (message) => {
-    status.textContent = "PDF 预览失败";
-    pages.innerHTML = `<div class="empty-panel pdf-preview-error">${escapeHtml(message)}</div>`;
-  };
-
-  const renderPage = async (pdf, pageNumber) => {
-    const page = await pdf.getPage(pageNumber);
-    if (disposed) {
-      return;
-    }
-
-    const viewport = page.getViewport({ scale: 1 });
-    const availableWidth = Math.min(Math.max(pages.clientWidth - 8, 320), 980);
-    const scale = availableWidth / viewport.width;
-    const pixelRatio = window.devicePixelRatio || 1;
-    const renderViewport = page.getViewport({ scale: scale * pixelRatio });
-    const displayViewport = page.getViewport({ scale });
-
-    const wrapper = document.createElement("section");
-    wrapper.className = "pdf-page-card";
-    wrapper.innerHTML = `
-      <header class="pdf-page-head">
-        <span>第 ${pageNumber} 页</span>
-      </header>
-      <canvas class="pdf-page-canvas"></canvas>
-    `;
-    pages.append(wrapper);
-
-    const canvas = wrapper.querySelector("canvas");
-    const context = canvas.getContext("2d", { alpha: false });
-    canvas.width = Math.ceil(renderViewport.width);
-    canvas.height = Math.ceil(renderViewport.height);
-    canvas.style.width = `${displayViewport.width}px`;
-    canvas.style.height = `${displayViewport.height}px`;
-
-    const renderTask = page.render({
-      canvasContext: context,
-      viewport: renderViewport,
-    });
-    renderTasks.add(renderTask);
-    try {
-      await renderTask.promise;
-    } finally {
-      renderTasks.delete(renderTask);
-    }
-  };
-
-  (async () => {
-    try {
-      status.textContent = "正在加载 PDF…";
-      const pdfjs = await getPdfJs();
-      if (disposed) {
-        return;
-      }
-      loadingTask = pdfjs.getDocument({
-        url: toAbsoluteUrl(src),
-        withCredentials: true,
-      });
-      const pdf = await loadingTask.promise;
-      if (disposed) {
-        await loadingTask.destroy();
-        return;
-      }
-
-      status.textContent = `共 ${pdf.numPages} 页`;
-      pages.innerHTML = "";
-      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-        if (disposed) {
-          break;
-        }
-        await renderPage(pdf, pageNumber);
-      }
-      if (!disposed && pdf.numPages === 0) {
-        pages.innerHTML = '<div class="empty-panel">这个 PDF 没有可渲染的页面。</div>';
-      }
-    } catch (error) {
-      if (!disposed) {
-        console.error(error);
-        showError(error?.message || "当前 PDF 无法渲染，请尝试新窗口打开。");
-      }
-    }
-  })();
-
-  return () => {
-    disposed = true;
-    for (const renderTask of renderTasks) {
-      try {
-        renderTask.cancel();
-      } catch {
-        // Ignore cancelled render tasks during teardown.
-      }
-    }
-    renderTasks.clear();
-    if (loadingTask) {
-      loadingTask.destroy().catch(() => {});
-    }
-  };
-}
 
 function resetTransientViewState() {
   state.activeView = "files";
@@ -1889,178 +1025,11 @@ function renderRows(items) {
 }
 
 function closeDetail() {
-  if (isPreviewOpen()) {
-    $("previewModal").close();
-    return;
-  }
-  resetPreviewDialog();
-}
-
-function openDetailShell(modeLabel, title, options = {}) {
-  closeManager();
-  closeAllActionMenus();
-  runPreviewCleanup();
-  $("contentGrid").classList.remove("detail-open");
-  $("detailPane").classList.add("hidden");
-  $("detailModeLabel").textContent = modeLabel;
-  $("previewTitle").textContent = title;
-  $("previewBody").className = "preview-body preview-modal-body";
-  $("previewBody").innerHTML = "";
-  $("saveTextBtn").classList.add("hidden");
-  if (options.externalHref) {
-    $("previewOpenBtn").classList.remove("hidden");
-    $("previewOpenBtn").onclick = () => {
-      const link = document.createElement("a");
-      link.href = options.externalHref;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.className = "hidden";
-      document.body.append(link);
-      link.click();
-      link.remove();
-    };
-  } else {
-    $("previewOpenBtn").classList.add("hidden");
-    $("previewOpenBtn").onclick = null;
-  }
-  if (!isPreviewOpen()) {
-    $("previewModal").showModal();
-  }
-}
-
-async function previewItem(item) {
-  await previewItemForWorkspace(state.currentWorkspace, item);
-}
-
-async function previewItemForWorkspace(workspace, item) {
-  state.currentItem = item;
-  state.editorPath = null;
-  const src = previewUrl(workspace, item.path);
-  if (item.preview_type === "html") {
-    runPreviewCleanup();
-    if (isPreviewOpen()) {
-      $("previewModal").close();
-    }
-    openHtmlPreview(workspace, item.path);
-    return;
-  }
-  openDetailShell("预览", item.path, { externalHref: src });
-  if (item.preview_type === "image") {
-    $("previewBody").innerHTML = `<img src="${src}" alt="${escapeHtml(item.name)}" />`;
-    return;
-  }
-  if (item.preview_type === "video") {
-    $("previewBody").innerHTML = `<video src="${src}" controls></video>`;
-    return;
-  }
-  if (item.preview_type === "audio") {
-    $("previewBody").innerHTML = `
-      <section class="audio-preview-shell">
-        <section class="audio-player-panel">
-          <audio id="audioPlayer" class="audio-native-element" src="${src}" preload="metadata"></audio>
-          <button id="audioPlayBtn" class="audio-play-button" type="button" aria-label="播放">
-            ${renderSvgIcon("play")}
-          </button>
-          <div class="audio-progress-shell">
-            <div class="audio-progress-meta">
-              <span class="audio-time-pair">
-                <span id="audioCurrentTime">0:00</span>
-                <span>/</span>
-                <span id="audioDuration">0:00</span>
-              </span>
-            </div>
-            <input id="audioProgress" class="audio-progress-input" type="range" min="0" max="100" step="0.1" value="0" aria-label="音频播放进度" />
-          </div>
-        </section>
-        <div class="audio-visualizer-card">
-          <canvas class="audio-visualizer" id="audioVisualizer" aria-hidden="true"></canvas>
-        </div>
-      </section>
-    `;
-    state.previewCleanup = createAudioPreview(
-      $("previewBody").querySelector("#audioPlayer"),
-      $("previewBody").querySelector("#audioVisualizer"),
-      $("previewBody"),
-    );
-    return;
-  }
-  if (item.preview_type === "pdf") {
-    $("previewBody").innerHTML = `
-      <section class="document-preview-shell pdf-preview-shell">
-        <div class="preview-inline-actions pdf-preview-toolbar">
-          <span id="pdfPreviewStatus" class="path-chip">正在加载 PDF…</span>
-          <a class="preview-link" href="${src}" target="_blank" rel="noopener noreferrer">新窗口打开</a>
-        </div>
-        <div id="pdfPreviewPages" class="pdf-preview-pages">
-          <div class="empty-panel">正在准备 PDF 预览…</div>
-        </div>
-      </section>
-    `;
-    state.previewCleanup = createPdfPreview(src, $("previewBody"));
-    return;
-  }
-  if (item.preview_type === "markdown") {
-    const params = new URLSearchParams({ workspace, path: item.path });
-    const html = await api(`/api/files/markdown?${params.toString()}`);
-    $("previewBody").innerHTML = `<div class="markdown-preview">${html}</div>`;
-    return;
-  }
-  if (item.preview_type === "text") {
-    const text = await loadText(item.path, workspace);
-    $("previewBody").innerHTML = `<pre class="text-preview">${escapeHtml(text)}</pre>`;
-    return;
-  }
-  $("previewBody").innerHTML = `
-    <div class="empty-state">
-      <button id="previewDownloadBtn" type="button">下载 ${escapeHtml(item.name)}</button>
-    </div>
-  `;
-  $("previewDownloadBtn").addEventListener("click", async () => {
-    try {
-      await downloadItem(item, workspace);
-    } catch (error) {
-      toast(error.message);
-    }
-  });
+  previewController.close();
 }
 
 async function editItem(item) {
-  if (!canEditItem(item)) return;
-  state.currentItem = item;
-  openDetailShell("编辑", item.path);
-  const text = await loadText(item.path);
-  $("previewBody").innerHTML = `<textarea class="editor" id="textEditor" spellcheck="false">${escapeHtml(text)}</textarea>`;
-  enableEditor(item.path);
-}
-
-async function loadText(path, workspace = state.currentWorkspace) {
-  const params = new URLSearchParams({ workspace, path });
-  const payload = await api(`/api/files/text?${params.toString()}`);
-  return payload.content;
-}
-
-function enableEditor(path) {
-  state.editorPath = path;
-  $("saveTextBtn").classList.toggle("hidden", state.currentPermission !== "write");
-}
-
-async function saveEditor() {
-  const editor = $("textEditor");
-  if (!editor || !state.editorPath) return;
-  const item = state.currentItem;
-  await api("/api/files/text", {
-    method: "POST",
-    body: {
-      workspace: state.currentWorkspace,
-      path: state.editorPath,
-      content: editor.value,
-    },
-  });
-  toast("已保存");
-  await loadFiles({ preserveDetail: true });
-  if (item) {
-    await editItem(item);
-  }
+  await previewController.editItem(item);
 }
 
 function openModal(html, onConfirm, options = {}) {
@@ -2990,9 +1959,9 @@ async function uploadSelectedFile(file, { index = -1, reload = true, notify = tr
   let uploaded;
   let overwritten = false;
   try {
-    startTrackedUpload(index);
-    uploaded = await requestFileUpload(file, {
-      onProgress: ({ loaded }) => updateTrackedUpload(index, loaded),
+    uploadProgress.startFile(index);
+    uploaded = await uploadProgress.requestFileUpload(file, {
+      onProgress: ({ loaded }) => uploadProgress.updateFile(index, loaded),
     });
   } catch (error) {
     if (error.status === 409 && error.message === "destination path already exists") {
@@ -3002,29 +1971,29 @@ async function uploadSelectedFile(file, { index = -1, reload = true, notify = tr
           trackedFile.loaded = 0;
           trackedFile.message = "等待覆盖确认";
           trackedFile.status = "queued";
-          updateUploadProgressDom();
+          uploadProgress.render();
         }
       }
       const confirmed = await confirmOverwriteUpload(file);
       if (!confirmed) {
-        finishTrackedUpload(index, "skipped", "已跳过");
+        uploadProgress.finishFile(index, "skipped", "已跳过");
         if (notify) {
           toast(`已取消覆盖 ${file.name}`);
         }
         return { skipped: true, overwritten: false, uploaded: null };
       }
-      startTrackedUpload(index);
-      uploaded = await requestFileUpload(file, {
+      uploadProgress.startFile(index);
+      uploaded = await uploadProgress.requestFileUpload(file, {
         overwrite: true,
-        onProgress: ({ loaded }) => updateTrackedUpload(index, loaded),
+        onProgress: ({ loaded }) => uploadProgress.updateFile(index, loaded),
       });
       overwritten = true;
     } else {
-      failTrackedUpload(index, error.message || "上传失败");
+      uploadProgress.failFile(index, error.message || "上传失败");
       throw error;
     }
   }
-  finishTrackedUpload(index, overwritten ? "overwritten" : "done", overwritten ? "已覆盖" : "已完成");
+  uploadProgress.finishFile(index, overwritten ? "overwritten" : "done", overwritten ? "已覆盖" : "已完成");
   if (notify) {
     toast(`${overwritten ? "已覆盖" : "已上传"} ${file.name}`);
   }
@@ -3039,7 +2008,7 @@ async function uploadFiles(fileList) {
   const files = Array.from(fileList || []).filter((file) => file && file.name);
   if (!files.length) return;
   state.isUploading = true;
-  state.uploadTracker = createUploadTracker(files);
+  state.uploadTracker = uploadProgress.createTracker(files);
   syncUploadDock();
   let uploadedCount = 0;
   let overwrittenCount = 0;
@@ -3077,10 +2046,7 @@ async function uploadFiles(fileList) {
     toast(error.message);
   } finally {
     state.isUploading = false;
-    if (state.uploadTracker) {
-      state.uploadTracker.finishedAt = Date.now();
-      state.uploadTracker.speed = 0;
-    }
+    uploadProgress.markFinished();
     state.dragDepth = 0;
     toggleDropOverlay(false);
     syncUploadDock();
@@ -3334,6 +2300,7 @@ async function openProfileManager({ skipRouteSync = false, replaceRoute = false 
 function bindEvents() {
   const workspaceSwitcher = $("workspaceSwitcher");
   const workspaceSearchInput = $("workspaceSearchInput");
+  const adminBtn = $("adminBtn");
 
   $("previewModal").addEventListener("close", resetPreviewDialog);
   $("logoutBtn").addEventListener("click", async () => {
@@ -3347,6 +2314,9 @@ function bindEvents() {
   $("sharedNavBtn").addEventListener("click", openSharedManager);
   $("shareManagerNavBtn").addEventListener("click", openShareManager);
   $("spaceManagerNavBtn").addEventListener("click", openWorkspaceMembersManager);
+  adminBtn?.addEventListener("click", () => {
+    window.location.assign(adminBtn.dataset.route || "/app/admin/actors");
+  });
   $("profileNavBtn").addEventListener("click", openProfileManager);
   $("saveTextBtn").addEventListener("click", saveEditor);
   $("closeDetailBtn").addEventListener("click", closeDetail);
@@ -3425,7 +2395,9 @@ function bindEvents() {
   });
   $("uploadBtn").addEventListener("click", () => $("fileInput").click());
   $("uploadProgressCloseBtn").addEventListener("click", () => {
-    clearUploadTracker();
+    if (uploadProgress.clear()) {
+      syncUploadDock();
+    }
   });
   $("uploadDropzone").addEventListener("click", () => {
     if (!state.isUploading) {

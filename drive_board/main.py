@@ -67,9 +67,9 @@ def _html_response(path: Path) -> HTMLResponse:
 
 def _render_app_shell(frontend: FrontendAssets, *, is_admin: bool, extension_module: str | None = None, extension_style: str | None = None) -> HTMLResponse:
     extension_link = (
-        '<a id="extensionEntryLink" class="sidebar-action secondary nav-button" href="/app/admin/actors">用户管理</a>'
+        '<button id="adminBtn" class="sidebar-action secondary nav-button" type="button" data-route="/app/admin/actors">用户管理</button>'
         if is_admin
-        else ""
+        else '<button id="adminBtn" class="sidebar-action secondary nav-button hidden" type="button">用户管理</button>'
     )
     html = (
         frontend.app_html_path.read_text(encoding="utf-8")
@@ -113,6 +113,17 @@ def _admin_file_response(request: Request, path: Path) -> FileResponse:
     return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
+def _resolve_asset_path(root: Path, asset_path: str) -> Path:
+    candidate = (root / asset_path).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="asset not found") from exc
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="asset not found")
+    return candidate
+
+
 def create_app(data_dir: str | None = None) -> FastAPI:
     config = get_config(data_dir)
     db = Database(config)
@@ -148,6 +159,16 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     @app.get("/assets/admin.js")
     async def admin_js(request: Request):
         return _admin_file_response(request, request.app.state.frontend.admin_js_path)
+
+    @app.get("/assets/{asset_path:path}")
+    async def app_asset_module(request: Request, asset_path: str):
+        normalized = asset_path.strip("/")
+        if not normalized:
+            raise HTTPException(status_code=404, detail="asset not found")
+        frontend = request.app.state.frontend
+        if normalized.startswith("admin/"):
+            return _admin_file_response(request, _resolve_asset_path(frontend.admin_js_path.parent, normalized))
+        return _auth_file_response(request, _resolve_asset_path(frontend.app_js_path.parent, normalized))
 
     @app.get("/")
     async def index(request: Request):
