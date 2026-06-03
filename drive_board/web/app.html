@@ -159,6 +159,27 @@
               <span id="uploadDockHint">拖拽文件到这里，或点击选择文件</span>
             </span>
           </button>
+          <div id="uploadProgressPanel" class="upload-progress-panel hidden" aria-live="polite">
+            <div class="upload-progress-summary">
+              <div class="upload-progress-heading">
+                <div class="upload-progress-heading-copy">
+                  <strong id="uploadOverallTitle">准备上传</strong>
+                  <span id="uploadOverallStats">0 / 0 个文件</span>
+                </div>
+                <button id="uploadProgressCloseBtn" class="upload-progress-close" type="button" aria-label="关闭上传记录">关闭</button>
+              </div>
+              <div class="upload-progress-bar" aria-hidden="true">
+                <span id="uploadOverallBarFill" class="upload-progress-fill"></span>
+              </div>
+              <div class="upload-progress-meta">
+                <span id="uploadOverallPercent">0%</span>
+                <span id="uploadOverallSpeed">实时 --</span>
+                <span id="uploadOverallAverageSpeed">平均 --</span>
+                <span id="uploadOverallBytes">0 B / 0 B</span>
+              </div>
+            </div>
+            <div id="uploadFileList" class="upload-file-list"></div>
+          </div>
         </section>
 
         <div id="dropOverlay" class="drop-overlay" aria-hidden="true">

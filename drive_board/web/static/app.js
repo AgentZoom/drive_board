@@ -30,6 +30,7 @@ const state = {
   previewCleanup: null,
   dragDepth: 0,
   isUploading: false,
+  uploadTracker: null,
 };
 
 const EDITABLE_PREVIEW_TYPES = new Set(["html", "markdown", "text"]);
@@ -639,6 +640,283 @@ function formatDuration(seconds) {
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
+function formatPercent(value) {
+  if (!Number.isFinite(value) || value <= 0) return "0%";
+  if (value >= 100) return "100%";
+  return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
+}
+
+function formatSpeed(bytesPerSecond) {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "--";
+  return `${formatSize(bytesPerSecond)}/s`;
+}
+
+function createUploadTracker(files) {
+  return {
+    startedAt: Date.now(),
+    finishedAt: null,
+    totalBytes: files.reduce((sum, file) => sum + Math.max(0, Number(file.size) || 0), 0),
+    speed: 0,
+    files: files.map((file, index) => ({
+      id: `${Date.now()}-${index}`,
+      name: file.name,
+      size: Math.max(0, Number(file.size) || 0),
+      loaded: 0,
+      speed: 0,
+      averageSpeed: 0,
+      status: "queued",
+      message: "排队中",
+      startedAt: null,
+      completedAt: null,
+      lastLoaded: 0,
+      lastProgressAt: null,
+    })),
+  };
+}
+
+function uploadTrackerSummary() {
+  const tracker = state.uploadTracker;
+  if (!tracker) return null;
+  const totalFiles = tracker.files.length;
+  const processedFiles = tracker.files.filter((file) => ["done", "overwritten", "skipped"].includes(file.status)).length;
+  const failedFiles = tracker.files.filter((file) => file.status === "error").length;
+  const totalLoaded = tracker.files.reduce((sum, file) => sum + Math.min(file.loaded || 0, file.size || 0), 0);
+  const percent = tracker.totalBytes > 0 ? (totalLoaded / tracker.totalBytes) * 100 : totalFiles ? (processedFiles / totalFiles) * 100 : 0;
+  const finishedAt = tracker.finishedAt || Date.now();
+  const elapsedSeconds = Math.max((finishedAt - tracker.startedAt) / 1000, 0.001);
+  const overallAverageSpeed = totalLoaded > 0 ? totalLoaded / elapsedSeconds : 0;
+  const activeIndex = tracker.files.findIndex((file) => file.status === "uploading");
+  return {
+    totalFiles,
+    processedFiles,
+    failedFiles,
+    totalLoaded,
+    percent,
+    overallSpeed: tracker.speed || 0,
+    overallAverageSpeed,
+    activeIndex,
+  };
+}
+
+function ensureUploadProgressRows(tracker) {
+  const fileList = $("uploadFileList");
+  if (!fileList) return;
+  const count = Number(fileList.dataset.count || "0");
+  if (count === tracker.files.length) {
+    return;
+  }
+  fileList.innerHTML = tracker.files
+    .map((file, index) => `
+      <div id="uploadFileRow-${index}" class="upload-file-row" data-status="${escapeHtml(file.status)}">
+        <div class="upload-file-head">
+          <strong id="uploadFileName-${index}" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong>
+          <span id="uploadFilePercent-${index}">0%</span>
+        </div>
+        <div class="upload-file-bar" aria-hidden="true">
+          <span id="uploadFileFill-${index}" class="upload-file-fill"></span>
+        </div>
+        <div class="upload-file-meta">
+          <span id="uploadFileBytes-${index}">0 B / ${escapeHtml(formatSize(file.size))}</span>
+          <span id="uploadFileSpeed-${index}">实时 --</span>
+          <span id="uploadFileAverageSpeed-${index}">平均 --</span>
+          <span id="uploadFileStatus-${index}">排队中</span>
+        </div>
+      </div>
+    `)
+    .join("");
+  fileList.dataset.count = String(tracker.files.length);
+}
+
+function updateUploadFileRow(index) {
+  const tracker = state.uploadTracker;
+  const file = tracker?.files?.[index];
+  if (!file) return;
+  const row = $(`uploadFileRow-${index}`);
+  if (!row) return;
+  const loaded = Math.min(file.loaded || 0, file.size || 0);
+  const percent = file.size > 0 ? (loaded / file.size) * 100 : (["done", "overwritten", "skipped"].includes(file.status) ? 100 : 0);
+  row.dataset.status = file.status;
+  $(`uploadFilePercent-${index}`).textContent = formatPercent(percent);
+  $(`uploadFileFill-${index}`).style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  $(`uploadFileBytes-${index}`).textContent = `${formatSize(loaded)} / ${formatSize(file.size)}`;
+  $(`uploadFileSpeed-${index}`).textContent = `实时 ${formatSpeed(file.speed)}`;
+  $(`uploadFileAverageSpeed-${index}`).textContent = `平均 ${formatSpeed(file.averageSpeed)}`;
+  $(`uploadFileStatus-${index}`).textContent = file.message;
+}
+
+function updateUploadProgressDom() {
+  const panel = $("uploadProgressPanel");
+  const fileList = $("uploadFileList");
+  const closeButton = $("uploadProgressCloseBtn");
+  const tracker = state.uploadTracker;
+  if (!panel || !fileList || !closeButton) return;
+  if (!tracker?.files?.length) {
+    panel.classList.add("hidden");
+    fileList.innerHTML = "";
+    fileList.dataset.count = "0";
+    closeButton.disabled = true;
+    return;
+  }
+  panel.classList.remove("hidden");
+  closeButton.disabled = state.isUploading;
+  ensureUploadProgressRows(tracker);
+  const summary = uploadTrackerSummary();
+  if (!summary) return;
+  const title = state.isUploading
+    ? `正在上传 ${summary.activeIndex > -1 ? `${summary.activeIndex + 1}/${summary.totalFiles}` : `${summary.processedFiles}/${summary.totalFiles}`}`
+    : summary.failedFiles
+      ? "上传已中断"
+      : "上传完成";
+  $("uploadOverallTitle").textContent = title;
+  $("uploadOverallStats").textContent = `${summary.processedFiles} / ${summary.totalFiles} 个文件`;
+  $("uploadOverallPercent").textContent = formatPercent(summary.percent);
+  $("uploadOverallSpeed").textContent = `实时 ${formatSpeed(summary.overallSpeed)}`;
+  $("uploadOverallAverageSpeed").textContent = `平均 ${formatSpeed(summary.overallAverageSpeed)}`;
+  $("uploadOverallBytes").textContent = `${formatSize(summary.totalLoaded)} / ${formatSize(tracker.totalBytes)}`;
+  $("uploadOverallBarFill").style.width = `${Math.max(0, Math.min(100, summary.percent))}%`;
+  tracker.files.forEach((_, index) => updateUploadFileRow(index));
+}
+
+function clearUploadTracker() {
+  if (state.isUploading) {
+    return false;
+  }
+  state.uploadTracker = null;
+  updateUploadProgressDom();
+  syncUploadDock();
+  return true;
+}
+
+function destinationUploadPath() {
+  return state.currentPath ? `${state.currentPath}/` : "";
+}
+
+function readUploadError(xhr) {
+  const contentType = xhr.getResponseHeader("content-type") || "";
+  if (contentType.includes("application/json") && xhr.response && typeof xhr.response === "object") {
+    return xhr.response.detail || xhr.statusText || "upload failed";
+  }
+  if (typeof xhr.responseText === "string" && xhr.responseText.trim()) {
+    try {
+      return JSON.parse(xhr.responseText).detail || xhr.responseText;
+    } catch {
+      return xhr.responseText;
+    }
+  }
+  return xhr.statusText || "upload failed";
+}
+
+function requestFileUpload(file, { overwrite = false, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/files/upload");
+    xhr.responseType = "json";
+    xhr.withCredentials = true;
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!onProgress) return;
+      const total = event.lengthComputable ? event.total : Math.max(0, Number(file.size) || 0);
+      onProgress({ loaded: event.loaded, total });
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (onProgress) {
+          onProgress({ loaded: Math.max(0, Number(file.size) || 0), total: Math.max(0, Number(file.size) || 0) });
+        }
+        resolve(xhr.response && typeof xhr.response === "object" ? xhr.response : JSON.parse(xhr.responseText || "null"));
+        return;
+      }
+      const error = new Error(readUploadError(xhr));
+      error.status = xhr.status;
+      reject(error);
+    });
+    xhr.addEventListener("error", () => {
+      const error = new Error("上传失败，网络连接异常");
+      error.status = xhr.status || 0;
+      reject(error);
+    });
+    xhr.addEventListener("abort", () => {
+      const error = new Error("上传已取消");
+      error.status = 0;
+      reject(error);
+    });
+    const formData = new FormData();
+    formData.set("workspace", state.currentWorkspace || "");
+    formData.set("path", destinationUploadPath());
+    formData.set("overwrite", overwrite ? "true" : "false");
+    formData.set("file", file, file.name);
+    xhr.send(formData);
+  });
+}
+
+function startTrackedUpload(index) {
+  const tracker = state.uploadTracker;
+  const file = tracker?.files?.[index];
+  if (!file) return;
+  const now = Date.now();
+  file.loaded = 0;
+  file.speed = 0;
+  file.averageSpeed = 0;
+  file.startedAt = now;
+  file.completedAt = null;
+  file.lastLoaded = 0;
+  file.lastProgressAt = now;
+  file.status = "uploading";
+  file.message = "上传中";
+  tracker.speed = 0;
+  updateUploadProgressDom();
+}
+
+function updateTrackedUpload(index, loaded) {
+  const tracker = state.uploadTracker;
+  const file = tracker?.files?.[index];
+  if (!file) return;
+  const now = Date.now();
+  const nextLoaded = Math.max(0, Math.min(file.size || 0, loaded || 0));
+  const deltaBytes = Math.max(0, nextLoaded - (file.lastLoaded || 0));
+  const deltaSeconds = file.lastProgressAt ? Math.max((now - file.lastProgressAt) / 1000, 0.001) : 0;
+  file.loaded = nextLoaded;
+  file.speed = deltaSeconds ? deltaBytes / deltaSeconds : file.speed;
+  const elapsedSeconds = file.startedAt ? Math.max((now - file.startedAt) / 1000, 0.001) : 0;
+  file.averageSpeed = elapsedSeconds ? file.loaded / elapsedSeconds : 0;
+  file.lastLoaded = nextLoaded;
+  file.lastProgressAt = now;
+  tracker.speed = file.speed;
+  updateUploadProgressDom();
+}
+
+function finishTrackedUpload(index, status, message) {
+  const tracker = state.uploadTracker;
+  const file = tracker?.files?.[index];
+  if (!file) return;
+  const now = Date.now();
+  if (["done", "overwritten"].includes(status)) {
+    file.loaded = file.size;
+  }
+  const elapsedSeconds = file.startedAt ? Math.max((now - file.startedAt) / 1000, 0.001) : 0;
+  file.averageSpeed = elapsedSeconds ? file.loaded / elapsedSeconds : file.averageSpeed;
+  file.status = status;
+  file.speed = 0;
+  file.message = message;
+  file.completedAt = now;
+  tracker.speed = 0;
+  updateUploadProgressDom();
+}
+
+function failTrackedUpload(index, message) {
+  const tracker = state.uploadTracker;
+  const file = tracker?.files?.[index];
+  if (!file) return;
+  const now = Date.now();
+  const elapsedSeconds = file.startedAt ? Math.max((now - file.startedAt) / 1000, 0.001) : 0;
+  file.averageSpeed = elapsedSeconds ? file.loaded / elapsedSeconds : file.averageSpeed;
+  file.status = "error";
+  file.speed = 0;
+  file.message = message;
+  file.completedAt = now;
+  tracker.speed = 0;
+  updateUploadProgressDom();
+}
+
 function currentWorkspaceInfo() {
   return state.workspaces.find((workspace) => workspace.name === state.currentWorkspace) || null;
 }
@@ -874,10 +1152,12 @@ function syncUploadDock() {
   }
   dropzone.disabled = state.isUploading;
   dropzone.classList.toggle("is-uploading", state.isUploading);
-  title.textContent = state.isUploading ? "正在上传" : "拖拽上传";
+  const summary = uploadTrackerSummary();
+  title.textContent = state.isUploading ? "正在上传" : (summary ? "继续上传" : "拖拽上传");
   hint.textContent = state.isUploading
-    ? "文件上传中，请稍候"
+    ? `${summary ? `${summary.processedFiles}/${summary.totalFiles} 个文件 · ${formatPercent(summary.percent)} · 实时 ${formatSpeed(summary.overallSpeed)}` : "文件上传中，请稍候"}`
     : `拖拽文件到这里，或点击选择文件，上传到 ${state.currentWorkspace}/${state.currentPath || ""}`;
+  updateUploadProgressDom();
 }
 
 function eventHasFiles(event) {
@@ -2706,26 +2986,45 @@ function openNewTextModal() {
   );
 }
 
-async function uploadSelectedFile(file, { reload = true, notify = true, preserveDetail = false } = {}) {
+async function uploadSelectedFile(file, { index = -1, reload = true, notify = true, preserveDetail = false } = {}) {
   let uploaded;
   let overwritten = false;
   try {
-    uploaded = await requestFileUpload(file);
+    startTrackedUpload(index);
+    uploaded = await requestFileUpload(file, {
+      onProgress: ({ loaded }) => updateTrackedUpload(index, loaded),
+    });
   } catch (error) {
     if (error.status === 409 && error.message === "destination path already exists") {
+      if (index > -1) {
+        const trackedFile = state.uploadTracker?.files?.[index];
+        if (trackedFile) {
+          trackedFile.loaded = 0;
+          trackedFile.message = "等待覆盖确认";
+          trackedFile.status = "queued";
+          updateUploadProgressDom();
+        }
+      }
       const confirmed = await confirmOverwriteUpload(file);
       if (!confirmed) {
+        finishTrackedUpload(index, "skipped", "已跳过");
         if (notify) {
           toast(`已取消覆盖 ${file.name}`);
         }
         return { skipped: true, overwritten: false, uploaded: null };
       }
-      uploaded = await requestFileUpload(file, { overwrite: true });
+      startTrackedUpload(index);
+      uploaded = await requestFileUpload(file, {
+        overwrite: true,
+        onProgress: ({ loaded }) => updateTrackedUpload(index, loaded),
+      });
       overwritten = true;
     } else {
+      failTrackedUpload(index, error.message || "上传失败");
       throw error;
     }
   }
+  finishTrackedUpload(index, overwritten ? "overwritten" : "done", overwritten ? "已覆盖" : "已完成");
   if (notify) {
     toast(`${overwritten ? "已覆盖" : "已上传"} ${file.name}`);
   }
@@ -2740,13 +3039,14 @@ async function uploadFiles(fileList) {
   const files = Array.from(fileList || []).filter((file) => file && file.name);
   if (!files.length) return;
   state.isUploading = true;
+  state.uploadTracker = createUploadTracker(files);
   syncUploadDock();
   let uploadedCount = 0;
   let overwrittenCount = 0;
   let skippedCount = 0;
   try {
-    for (const file of files) {
-      const result = await uploadSelectedFile(file, { reload: false, notify: false });
+    for (const [index, file] of files.entries()) {
+      const result = await uploadSelectedFile(file, { index, reload: false, notify: false });
       if (!result || result.skipped) {
         skippedCount += 1;
         continue;
@@ -2777,6 +3077,10 @@ async function uploadFiles(fileList) {
     toast(error.message);
   } finally {
     state.isUploading = false;
+    if (state.uploadTracker) {
+      state.uploadTracker.finishedAt = Date.now();
+      state.uploadTracker.speed = 0;
+    }
     state.dragDepth = 0;
     toggleDropOverlay(false);
     syncUploadDock();
@@ -3120,6 +3424,9 @@ function bindEvents() {
     syncRoute({ replace: true });
   });
   $("uploadBtn").addEventListener("click", () => $("fileInput").click());
+  $("uploadProgressCloseBtn").addEventListener("click", () => {
+    clearUploadTracker();
+  });
   $("uploadDropzone").addEventListener("click", () => {
     if (!state.isUploading) {
       $("fileInput").click();

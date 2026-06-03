@@ -629,6 +629,8 @@ textarea:focus {
   transform: translateX(-50%);
   width: min(calc(100vw - (var(--sidebar-width) + 40px)), 560px);
   z-index: 15;
+  display: grid;
+  gap: 10px;
 }
 
 .upload-dropzone {
@@ -690,6 +692,133 @@ textarea:focus {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.upload-progress-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(22, 122, 107, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 30px rgba(31, 38, 35, 0.08);
+}
+
+.upload-progress-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.upload-progress-heading-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.upload-progress-heading,
+.upload-progress-meta,
+.upload-file-head,
+.upload-file-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.upload-progress-heading strong,
+.upload-file-head strong {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.upload-progress-close {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(20, 30, 26, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.upload-progress-close:hover:not(:disabled) {
+  color: var(--accent-strong);
+  border-color: rgba(22, 122, 107, 0.24);
+  background: #fff;
+}
+
+.upload-progress-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.upload-progress-heading span,
+.upload-progress-meta span,
+.upload-file-head span,
+.upload-file-meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.upload-progress-bar,
+.upload-file-bar {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(20, 30, 26, 0.08);
+}
+
+.upload-progress-fill,
+.upload-file-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #167a6b 0%, #40c0a2 100%);
+  transition: width 120ms linear;
+}
+
+.upload-file-list {
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.upload-file-row {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--surface-alt);
+  border: 1px solid rgba(20, 30, 26, 0.06);
+}
+
+.upload-file-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-file-row[data-status="uploading"] {
+  border-color: rgba(22, 122, 107, 0.2);
+  background: rgba(232, 245, 241, 0.76);
+}
+
+.upload-file-row[data-status="done"] .upload-file-fill,
+.upload-file-row[data-status="overwritten"] .upload-file-fill,
+.upload-file-row[data-status="skipped"] .upload-file-fill {
+  background: linear-gradient(90deg, #167a6b 0%, #56d0a8 100%);
+}
+
+.upload-file-row[data-status="error"] .upload-file-fill {
+  background: linear-gradient(90deg, #b54b4b 0%, #db7a7a 100%);
 }
 
 .drop-overlay {
@@ -1809,6 +1938,12 @@ dialog menu {
     width: calc(100vw - 28px);
   }
 
+  .upload-progress-meta,
+  .upload-file-meta {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
   .topbar,
   .content-grid,
   .content-grid.detail-open,
@@ -1860,6 +1995,20 @@ dialog menu {
   .upload-dropzone {
     min-height: 68px;
     padding: 12px 14px;
+  }
+
+  .upload-progress-panel {
+    padding: 12px;
+  }
+
+  .upload-progress-heading,
+  .upload-file-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .upload-progress-close {
+    align-self: flex-end;
   }
 
   .upload-drop-icon {
